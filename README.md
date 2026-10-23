@@ -31,7 +31,7 @@ Start the PostgreSQL service:
 docker compose up -d
 ```
 
-The database runs on port `55433`.
+The database runs on port `55432`.
 
 Set up and start the backend:
 
