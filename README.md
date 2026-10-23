@@ -1,4 +1,4 @@
-# QueryPilot
+# QueryPilot [ongoing project]
 
 **Turn natural language into secure, executable SQL.**
 
