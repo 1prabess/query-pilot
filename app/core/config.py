@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal, Self
 
-from pydantic import Field, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,6 +27,30 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_TTL_DAYS: int = Field(default=30, ge=1, le=365)
     MAGIC_LINK_TTL_MINUTES: int = Field(default=15, ge=1, le=1440)
     JWT_ALGORITHM: Literal["HS256", "HS384", "HS512"] = "HS256"
+    CREDENTIAL_ENCRYPTION_KEY: SecretStr
+
+    GEMINI_API_KEY: SecretStr = SecretStr("")
+    GEMINI_MODEL: str = "gemini-3.5-flash-lite"
+
+    OLLAMA_BASE_URL: str | None = None
+    OLLAMA_MODEL: str | None = None
+
+    AI_SCHEMA_TOKEN_BUDGET: int = Field(default=12_000, ge=1_000, le=200_000)
+
+    AI_MAX_OUTPUT_TOKENS: int = Field(default=4096, ge=256, le=32_000)
+
+    @property
+    def ai_configured(self) -> bool:
+        """Is there any provider at all?
+
+        A property rather than a module-level constant, because the answer
+        depends on settings that are read at runtime and can be changed by a
+        test fixture.
+        """
+        return bool(
+            self.GEMINI_API_KEY.get_secret_value()
+            or (self.OLLAMA_BASE_URL and self.OLLAMA_MODEL)
+        )
 
     @property
     def is_production(self) -> bool:
