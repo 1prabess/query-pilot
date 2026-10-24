@@ -1,12 +1,16 @@
 from datetime import datetime
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import Boolean, DateTime, String, false, func, true
 from sqlalchemy.dialects.postgresql import CITEXT
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
+
+if TYPE_CHECKING:
+    from app.models.project import Project
 
 
 class User(Base):
@@ -29,3 +33,7 @@ class User(Base):
         Boolean, default=False, server_default=false())
     is_active: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default=true())
+
+    # Named as a registry string, not imported: Project imports this module,
+    # so a runtime import of Project here would be circular.
+    projects: Mapped[list["Project"]] = relationship("Project", back_populates="owner")
