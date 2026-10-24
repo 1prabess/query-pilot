@@ -1,14 +1,17 @@
 from typing import Annotated
 
 from fastapi import Depends
-from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import decode_access_token
 from app.db.session import get_db
+from app.llm.service import LLMService, get_llm_service
 from app.models.user import User
 from app.services.auth import AuthError, AuthService
+from app.services.project import ProjectService
+from app.services.query import QueryService
+from app.services.schema_service import SchemaService
 
 bearer = HTTPBearer(auto_error=False)
 
@@ -20,6 +23,31 @@ def get_auth_service(session: DbSession) -> AuthService:
 
 
 AuthSvc = Annotated[AuthService, Depends(get_auth_service)]
+
+
+def get_project_service(session: DbSession) -> ProjectService:
+    return ProjectService(session)
+
+
+ProjectSvc = Annotated[ProjectService, Depends(get_project_service)]
+
+
+def get_schema_service(session: DbSession) -> SchemaService:
+    return SchemaService(session)
+
+
+SchemaSvc = Annotated[SchemaService, Depends(get_schema_service)]
+
+
+def get_query_service(session: DbSession) -> QueryService:
+    return QueryService(session)
+
+
+QuerySvc = Annotated[QueryService, Depends(get_query_service)]
+
+# The LLM service is built on first use and shared by every request, so it
+# takes no session -- it has no database of its own to close.
+LLMSvc = Annotated[LLMService, Depends(get_llm_service)]
 
 
 async def get_current_user(
