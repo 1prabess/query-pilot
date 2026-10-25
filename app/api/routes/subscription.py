@@ -46,15 +46,4 @@ async def my_subscription(
 @router.get("/usage", response_model=UsageResponse)
 async def my_usage(user: CurrentUser, quota: QuotaSvc) -> UsageResponse:
     """What this account has used this period, and what it is allowed."""
-    allowance = await quota.allowance(user.id)
-    plan = allowance.plan
-    return UsageResponse(
-        tier=plan.tier,
-        plan=PlanResponse.of(plan),
-        projects_used=allowance.projects_used,
-        projects_limit=plan.max_projects,
-        queries_used=allowance.queries_used,
-        queries_limit=plan.monthly_queries,
-        period_start=allowance.period_start,
-        period_end=allowance.period_end,
-    )
+    return UsageResponse.of(await quota.allowance(user.id))

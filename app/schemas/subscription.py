@@ -3,6 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from app.services.plans import Plan
+from app.services.quota import Allowance
 
 
 class PlanResponse(BaseModel):
@@ -54,6 +55,25 @@ class UsageResponse(BaseModel):
     queries_limit: int | None
     period_start: datetime
     period_end: datetime
+
+    @classmethod
+    def of(cls, allowance: Allowance) -> "UsageResponse":
+        """The usage as it is, without remapping it by hand.
+
+        Two places show usage -- the account's own page and the
+        administrator's page for it -- and they have to agree.
+        """
+        plan = allowance.plan
+        return cls(
+            tier=plan.tier,
+            plan=PlanResponse.of(plan),
+            projects_used=allowance.projects_used,
+            projects_limit=plan.max_projects,
+            queries_used=allowance.queries_used,
+            queries_limit=plan.monthly_queries,
+            period_start=allowance.period_start,
+            period_end=allowance.period_end,
+        )
 
 
 class SetPlanRequest(BaseModel):

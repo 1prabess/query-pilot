@@ -1,18 +1,64 @@
 from uuid import UUID
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
-from app.api.deps import AdminUser, DbSession, SubscriptionSvc
+from app.api.deps import AdminSvc, AdminUser, DbSession, SubscriptionSvc
 from app.core.errors import UserNotFound
 from app.models.user import User
+from app.schemas.admin import AdminUserDetail, AdminUserListResponse, AdminUserSummary
 from app.schemas.subscription import (
     PlanResponse,
     SetPlanRequest,
     SubscriptionResponse,
+    UsageResponse,
 )
 from app.services.plans import get_plan
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+@router.get("/users", response_model=AdminUserListResponse)
+async def list_users(
+    svc: AdminSvc,
+    admin: AdminUser,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> AdminUserListResponse:
+    """Every account, the plan it is on, and what it has used.
+
+    The counts are totals, not this period's usage: the period belongs to
+    each subscription, so the number that depends on it is on the account's
+    own page.
+    """
+    summaries, total = await svc.list_users(limit=limit, offset=offset)
+    return AdminUserListResponse(
+        total=total,
+        limit=limit,
+        offset=offset,
+        users=[AdminUserSummary.model_validate(summary) for summary in summaries],
+    )
+
+
+@router.get("/users/{user_id}", response_model=AdminUserDetail)
+async def get_user(
+    user_id: UUID, svc: AdminSvc, admin: AdminUser
+) -> AdminUserDetail:
+    """One account, and everything counted against it.
+
+    This is where the usage for the account's own period lives, because one
+    window cannot count a premium customer against the calendar month.
+    """
+    detail = await svc.get_user(user_id)
+    if detail is None:
+        raise UserNotFound("No such user.")
+
+    summary = AdminUserSummary.model_validate(detail.summary)
+    return AdminUserDetail(
+        **summary.model_dump(),
+        usage=UsageResponse.of(detail.allowance),
+        provider_customer_id=detail.provider_customer_id,
+        provider_subscription_id=detail.provider_subscription_id,
+    )
 
 
 @router.patch("/users/{user_id}/subscription", response_model=SubscriptionResponse)

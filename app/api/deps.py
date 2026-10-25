@@ -9,6 +9,7 @@ from app.core.security import decode_access_token
 from app.db.session import get_db
 from app.llm.service import LLMService, get_llm_service
 from app.models.user import User
+from app.services.admin import AdminService
 from app.services.auth import AuthError, AuthService
 from app.services.project import ProjectService
 from app.services.query import QueryService
@@ -34,6 +35,13 @@ def get_project_service(session: DbSession) -> ProjectService:
 
 
 ProjectSvc = Annotated[ProjectService, Depends(get_project_service)]
+
+
+def get_admin_service(session: DbSession) -> AdminService:
+    return AdminService(session)
+
+
+AdminSvc = Annotated[AdminService, Depends(get_admin_service)]
 
 
 def get_schema_service(session: DbSession) -> SchemaService:

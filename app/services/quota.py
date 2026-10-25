@@ -37,6 +37,7 @@ class Allowance:
     queries_used: int
     period_start: datetime
     period_end: datetime
+    subscription: Subscription | None
 
 
 class QuotaService:
@@ -74,6 +75,7 @@ class QuotaService:
             queries_used=await self._queries_used(user_id, period_start, period_end),
             period_start=period_start,
             period_end=period_end,
+            subscription=subscription,
         )
 
     def assert_can_create_project(self, allowance: Allowance) -> None:
