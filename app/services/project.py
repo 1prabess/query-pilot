@@ -7,6 +7,7 @@ from sqlalchemy.orm import selectinload
 from app.core.errors import AppError
 from app.models.project import Project
 from app.models.user import User
+from app.services.quota import QuotaService
 
 
 class ProjectNotFound(AppError, status_code=404, code="project_not_found"):
@@ -56,8 +57,12 @@ class ProjectService:
 
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
+        self.quota = QuotaService(session)
 
     async def create_project(self, owner: User, name: str) -> Project:
+        allowance = await self.quota.allowance(owner.id)
+        self.quota.assert_can_create_project(allowance)
+
         project = Project(owner_id=owner.id, name=name.strip())
         self.session.add(project)
 

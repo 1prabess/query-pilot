@@ -11,7 +11,9 @@ from app.models.user import User
 from app.services.auth import AuthError, AuthService
 from app.services.project import ProjectService
 from app.services.query import QueryService
+from app.services.quota import QuotaService
 from app.services.schema_service import SchemaService
+from app.services.subscription import SubscriptionService
 
 bearer = HTTPBearer(auto_error=False)
 
@@ -44,6 +46,21 @@ def get_query_service(session: DbSession) -> QueryService:
 
 
 QuerySvc = Annotated[QueryService, Depends(get_query_service)]
+
+
+def get_subscription_service(session: DbSession) -> SubscriptionService:
+    return SubscriptionService(session)
+
+
+SubscriptionSvc = Annotated[SubscriptionService,
+                            Depends(get_subscription_service)]
+
+
+def get_quota_service(session: DbSession) -> QuotaService:
+    return QuotaService(session)
+
+
+QuotaSvc = Annotated[QuotaService, Depends(get_quota_service)]
 
 # The LLM service is built on first use and shared by every request, so it
 # takes no session -- it has no database of its own to close.

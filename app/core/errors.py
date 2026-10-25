@@ -66,3 +66,31 @@ class UnsafeQuery(AppError, status_code=422, code="unsafe_query"):
     is read-only as far as this product is concerned, and that has to hold
     even when the model does not.
     """
+
+
+class QuotaExceeded(AppError, status_code=429, code="quota_exceeded"):
+    """The user's plan does not allow any more of this this period.
+
+    429 because the same request will work again once the period rolls over.
+    """
+
+
+class ProjectLimitReached(AppError, status_code=403, code="project_limit_reached"):
+    """The user already has as many projects as their plan allows."""
+
+
+class PlanLimitExceeded(AppError, status_code=403, code="plan_limit_exceeded"):
+    """The request asks for more than the plan allows."""
+
+
+class PlanNotAllowed(AppError, status_code=403, code="plan_not_allowed"):
+    """The plan does not include this capability."""
+
+
+class UnknownTier(AppError, status_code=422, code="unknown_tier"):
+    """No plan has that name."""
+
+
+class UnknownSubscriptionStatus(AppError, status_code=422, code="unknown_status"):
+    """No subscription status has that name."""
+

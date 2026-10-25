@@ -11,7 +11,9 @@ from app.core.errors import AppError
 from app.core.security import hash_password
 from app.models.magic_link import MagicLink
 from app.models.refresh_token import RefreshToken
+from app.models.subscription import Subscription
 from app.models.user import User
+from app.services.plans import ACTIVE, FREE
 
 
 @dataclass(frozen=True)
@@ -66,6 +68,14 @@ class AuthService:
         # RefreshToken with a real user_id. Committing here would end the unit of
         # work two statements early.
         await self.session.flush()
+
+        # Everybody starts on the free plan. The row is written here rather
+        # than left to be made on first sight so that "which plan is this
+        # customer on" has one answer for every account, old and new.
+        self.session.add(
+            Subscription(user_id=user.id, tier=FREE, status=ACTIVE)
+        )
+
         return await self._issue(user, family_id=uuid.uuid4())
 
     async def authenticate(self, email: str, password: str) -> TokenPair:
