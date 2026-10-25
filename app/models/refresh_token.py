@@ -25,7 +25,8 @@ class RefreshToken(Base):
         nullable=False,
     )
     token_hash: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
-    family_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    family_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )

@@ -19,9 +19,10 @@ Each user creates a project and connects their own PostgreSQL database. QueryPil
 - **Natural Language to SQL:** Translate plain-English questions into PostgreSQL queries.
 - **Schema-Aware Generation:** Generate queries using the structure of the connected database.
 - **SQL Validation:** Validate generated queries before execution.
-- **Read-Only Execution:** Run queries with restricted database permissions, row limits, and execution timeouts.
+- **Read-Only by Default:** Run queries with restricted database permissions, row limits, and execution timeouts. A project on a plan that includes writes can opt in to writing to its own database.
 - **Multi-Tenant Architecture:** Isolate projects and manage database connections across users.
-- **ORM Code Generation:** Get equivalent query implementations for SQLAlchemy, TypeORM, and Prisma.
+- **Free, Basic and Premium Plans:** Put limits on projects, questions and rows, with the seam a payment provider will fill in later.
+- **ORM Code Generation:** Get equivalent query implementations for SQLAlchemy, TypeORM, and Prisma. Model names are derived from the table names -- `users` becomes `User` -- because the database schema does not say what your ORM calls them.
 
 ## Getting Started
 
@@ -55,12 +56,6 @@ Expected response:
   "status": "ok"
 }
 ```
-
-## API Documentation
-
-Explore endpoints and test requests interactively through the Swagger UI:
-
-**http://127.0.0.1:8000/docs**
 
 ## Run Tests
 

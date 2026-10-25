@@ -28,9 +28,6 @@ class MagicLink(Base):
     expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
-    # NULL until spent. "Never used" and "used at this instant" are different
-    # questions, and NULL is the honest answer to the first one -- a boolean
-    # column needs a default that lies about rows written before the feature.
     consumed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

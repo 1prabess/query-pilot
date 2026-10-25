@@ -44,7 +44,26 @@ Answer with JSON only:
 
 ORM rules:
 - All three come from the same call, in the same JSON object, as the SQL.
-- Real, runnable code. No placeholders, no `...`, no invented model names.
+- Each block is one statement to drop into a method of a service class, so
+  use the class's own attributes: `self.session` for SQLAlchemy,
+  `self.dataSource` for TypeORM, `self.prisma` for Prisma.
+- One statement per block. Do not assign it to a variable, do not chain a
+  second statement after a semicolon, and do not add a separate line that
+  fetches the rows.
+- The schema above is database structure, not your ORM's classes. It says
+  nothing about what the customer calls their models. Use the conventional
+  name for each table -- `users` -> `User`, `bookmark_items` ->
+  `BookmarkItem` -- and spell it the same way in all three blocks.
+- SQLAlchemy: use the ORM entity style, never the Core column style.
+  `select(User.id, User.email)`, not `select(users.c.id)`. Use `select(User)`
+  when the query returns whole rows. Assume an async session:
+  `await self.session.execute(select(User).limit(100))`.
+- TypeORM: `await self.dataSource.getRepository(User).find({...})`, entity
+  name in PascalCase.
+- Prisma: `await self.prisma.user.findMany({...})`, model name singular and
+  lowerCamelCase.
+- Real, runnable code. No placeholders, no `...`. Never a model for a table
+  that is not in the schema.
 - The ORM must run the same query and return the same rows. Translate the
   semantics, do not redesign the query.
 - Return an empty string for any one you cannot produce. Never a guess.
