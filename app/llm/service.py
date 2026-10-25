@@ -8,7 +8,7 @@ from app.llm.context import budget_context
 from app.llm.gemini import Gemini
 from app.llm.ollama import Ollama
 from app.llm.parse import _strip_fence, parse_json_response, recover_sql
-from app.llm.prompts import SYSTEM_PROMPT, build_user_prompt
+from app.llm.prompts import build_system_prompt, build_user_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +150,7 @@ class LLMService:
         *,
         question: str,
         schema_doc: dict,
+        writes_enabled: bool = False,
         max_output_tokens: int | None = None,
     ) -> Completion:
         if self._provider is None:
@@ -159,12 +160,14 @@ class LLMService:
         schema_text, truncated = budget_context(
             schema_doc, max_tokens=schema_budget
         )
-        prompt = build_user_prompt(question, schema_text, truncated=truncated)
+        prompt = build_user_prompt(
+            question, schema_text, truncated=truncated, writes_enabled=writes_enabled
+        )
         budget = max_output_tokens or output_budget
 
         try:
             completion = await self._provider.complete(
-                SYSTEM_PROMPT,
+                build_system_prompt(writes_enabled=writes_enabled),
                 prompt,
                 max_output_tokens=budget,
             )
