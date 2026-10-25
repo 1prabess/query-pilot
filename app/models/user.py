@@ -34,6 +34,11 @@ class User(Base):
         Boolean, default=False, server_default=false())
     is_active: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default=true())
+    role: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        server_default="user"
+    )
 
     # Named as a registry string, not imported: Project imports this module,
     # so a runtime import of Project here would be circular.

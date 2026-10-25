@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.routes import auth, health, project, query, schema, subscription
+from app.api.routes import admin, auth, health, project, query, schema, subscription
 from app.core.config import get_settings
 from app.core.errors import AppError
 from app.db.session import engine
@@ -41,6 +41,7 @@ app.include_router(schema.router, prefix="/api/v1")
 app.include_router(query.router, prefix="/api/v1")
 app.include_router(subscription.router, prefix="/api/v1")
 app.include_router(subscription.plans_router, prefix="/api/v1")
+app.include_router(admin.router, prefix="/api/v1")
 
 
 @app.exception_handler(AppError)

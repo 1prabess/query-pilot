@@ -114,3 +114,11 @@ class UnknownTier(AppError, status_code=422, code="unknown_tier"):
 class UnknownSubscriptionStatus(AppError, status_code=422, code="unknown_status"):
     """No subscription status has that name."""
 
+
+class AdminRequired(AppError, status_code=403, code="admin_required"):
+    """This action is for administrators."""
+
+
+class UserNotFound(AppError, status_code=404, code="user_not_found"):
+    """No account with that id."""
+

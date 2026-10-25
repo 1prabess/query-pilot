@@ -4,6 +4,7 @@ from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import AdminRequired
 from app.core.security import decode_access_token
 from app.db.session import get_db
 from app.llm.service import LLMService, get_llm_service
@@ -92,3 +93,16 @@ async def get_current_user(
     return user
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+def _is_admin(user: User) -> bool:
+    return user.role == "admin"
+
+
+def get_current_admin(user: CurrentUser) -> User:
+    if not _is_admin(user):
+        raise AdminRequired("This action is for administrators")
+    return user
+
+
+AdminUser = Annotated[User, Depends(get_current_admin)]
