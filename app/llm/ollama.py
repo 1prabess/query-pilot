@@ -23,7 +23,15 @@ class Ollama:
             ],
             "stream": False,
             "format": "json",
-            "options": {"temperature": 0, "num_predict": max_output_tokens},
+            # Without this the model stays resident for five minutes after
+            # the last question, and a laptop with 8 GB of RAM spends those
+            # five minutes swapping.
+            "keep_alive": self._settings.OLLAMA_KEEP_ALIVE,
+            "options": {
+                "temperature": 0,
+                "num_predict": max_output_tokens,
+                "num_ctx": self._settings.OLLAMA_NUM_CTX,
+            },
         }
         async with httpx.AsyncClient(timeout=180.0) as client:
             response = await client.post(

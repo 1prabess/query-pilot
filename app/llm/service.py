@@ -12,14 +12,51 @@ from app.llm.prompts import SYSTEM_PROMPT, build_user_prompt
 
 logger = logging.getLogger(__name__)
 
+# Room inside a local model's context window for the system prompt and the
+# question, and for the answer it has to write back.
+_PROMPT_RESERVE = 400
+_OUTPUT_RESERVE = 400
+
 
 class LLMService:
     def __init__(self, providers: list[Provider] | None = None) -> None:
         self.settings = get_settings()
-        self._providers = providers or [
-            Gemini(self.settings), Ollama(self.settings)]
+        self._providers = providers or self._select_providers()
         self._provider = next(
             (p for p in self._providers if p.is_configured()), None)
+
+    def _select_providers(self) -> list[Provider]:
+        """The providers to try, in the order the setting says to try them.
+
+        `AI_PROVIDER` picks one outright, so a machine that has both a Gemini
+        key and a local Ollama does not have to unset the key to switch
+        between them. `auto` prefers Gemini and falls back to Ollama.
+        """
+        choice = self.settings.AI_PROVIDER
+        if choice == "gemini":
+            return [Gemini(self.settings)]
+        if choice == "ollama":
+            return [Ollama(self.settings)]
+        return [Gemini(self.settings), Ollama(self.settings)]
+
+    def _unavailable_message(self) -> str:
+        """Say what is missing, rather than only that something is."""
+        choice = self.settings.AI_PROVIDER
+        if choice == "gemini":
+            return (
+                "AI_PROVIDER is set to gemini, but GEMINI_API_KEY is not set in "
+                ".env. Write the SQL by hand, or set AI_PROVIDER to ollama."
+            )
+        if choice == "ollama":
+            return (
+                "AI_PROVIDER is set to ollama, but OLLAMA_BASE_URL and "
+                "OLLAMA_MODEL are not set in .env. Write the SQL by hand, or "
+                "set AI_PROVIDER to gemini."
+            )
+        return (
+            "No AI provider is configured. Set GEMINI_API_KEY, or the Ollama "
+            "settings, in .env -- or write the SQL by hand."
+        )
 
     def _parse(self, text: str) -> dict[str, Any]:
         parsed = parse_json_response(text)
@@ -83,24 +120,53 @@ class LLMService:
             "orm_prisma": "",
         }
 
-    async def generate(
-        self, *, question: str, schema_doc: dict, max_output_tokens: int | None = None
-    ) -> Completion:
-        if self._provider is None:
-            raise LLMUnavailable(
-                "No AI provider is configured. Add a free key to .env, or write "
-                "the SQL by hand -- the rest of QueryPilot works without one."
+    def _budgets(self) -> tuple[int, int]:
+        """(schema tokens, output tokens) that fit the selected provider.
+
+        Gemini has a context window of a million tokens and the budget is
+        never the binding constraint. A local model runs with a window of a
+        few thousand, and a prompt that does not fit in the window is a
+        prompt the model cannot read -- so the schema is trimmed to fit (the
+        model is told it was trimmed) and the answer gets what is left.
+        """
+        schema_budget = self.settings.AI_SCHEMA_TOKEN_BUDGET
+        output_budget = self.settings.AI_MAX_OUTPUT_TOKENS
+
+        if self._provider is not None and self._provider.name == "ollama":
+            window = self.settings.OLLAMA_NUM_CTX
+            schema_budget = min(
+                schema_budget,
+                max(512, window - _PROMPT_RESERVE - _OUTPUT_RESERVE),
+            )
+            output_budget = min(
+                output_budget,
+                max(256, window - schema_budget - _PROMPT_RESERVE),
             )
 
+        return schema_budget, output_budget
+
+    async def generate(
+        self,
+        *,
+        question: str,
+        schema_doc: dict,
+        max_output_tokens: int | None = None,
+    ) -> Completion:
+        if self._provider is None:
+            raise LLMUnavailable(self._unavailable_message())
+
+        schema_budget, output_budget = self._budgets()
         schema_text, truncated = budget_context(
-            schema_doc, max_tokens=self.settings.AI_SCHEMA_TOKEN_BUDGET
+            schema_doc, max_tokens=schema_budget
         )
         prompt = build_user_prompt(question, schema_text, truncated=truncated)
-        budget = max_output_tokens or self.settings.AI_MAX_OUTPUT_TOKENS
+        budget = max_output_tokens or output_budget
 
         try:
             completion = await self._provider.complete(
-                SYSTEM_PROMPT, prompt, max_output_tokens=budget
+                SYSTEM_PROMPT,
+                prompt,
+                max_output_tokens=budget,
             )
         except LLMError:
             raise
