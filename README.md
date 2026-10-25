@@ -60,6 +60,5 @@ Expected response:
 ## Run Tests
 
 ```bash
-cd backend
 uv run pytest -q
 ```
