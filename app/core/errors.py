@@ -58,6 +58,26 @@ class LLMUnavailable(LLMError, status_code=503, code="no_provider"):
     """There is no provider at all, as opposed to one that just failed."""
 
 
+class QueryNotFound(AppError, status_code=404, code="query_not_found"):
+    """No query with that id belongs to this project."""
+
+
+class QueryExecutionFailed(AppError, status_code=502, code="query_execution_failed"):
+    """The customer's database refused the query."""
+
+
+class QueryTimeout(AppError, status_code=504, code="query_timeout"):
+    """The query ran for longer than we let it."""
+
+
+class WritesDisabled(AppError, status_code=422, code="writes_disabled"):
+    """This project is not allowed to run queries that change data."""
+
+
+class WriteNotConfirmed(AppError, status_code=422, code="write_not_confirmed"):
+    """The query changes data, and the caller did not say it meant it."""
+
+
 class UnsafeQuery(AppError, status_code=422, code="unsafe_query"):
     """The answer was not a single read-only statement.
 

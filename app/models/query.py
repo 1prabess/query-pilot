@@ -34,6 +34,15 @@ class Query(Base):
         Integer, nullable=True)
     status: Mapped[str | None] = mapped_column(String(40), nullable=True)
 
+    # What happened when this query was last run against the customer's
+    # database. A query that has never been run has no row count and no
+    # time, and that is the honest thing to record.
+    executed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    row_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    execution_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )

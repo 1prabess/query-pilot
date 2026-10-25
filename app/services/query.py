@@ -10,64 +10,23 @@ is what makes the whole path testable: a fake provider, no network, no key.
 
 from __future__ import annotations
 
-import sqlglot
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlglot import exp
+import uuid
 
-from app.core.errors import UnsafeQuery
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.errors import (
+    PlanNotAllowed,
+    QueryNotFound,
+    WriteNotConfirmed,
+    WritesDisabled,
+)
 from app.llm.service import LLMService
 from app.models.project import Project
 from app.models.query import Query
-
-# Nodes that change something. The DML classes are spelled out one by one
-# because sqlglot keeps `DML` itself out of its public exports. `DDL` covers
-# CREATE/DROP/ALTER. The rest are statements that are neither a query nor
-# caught by those two: `SELECT ... INTO` creates a table, `FOR UPDATE` locks
-# rows, `SET` changes the session, `USE` switches database.
-_FORBIDDEN = (
-    exp.Insert,
-    exp.Update,
-    exp.Delete,
-    exp.Merge,
-    exp.Copy,
-    exp.DDL,
-    exp.Command,
-    exp.TruncateTable,
-    exp.Into,
-    exp.Lock,
-    exp.Set,
-    exp.Use,
-)
-
-
-def assert_read_only(sql: str) -> None:
-    """Refuse anything that is not a single read-only statement.
-
-    The prompt asks for one SELECT, and the model nearly always complies.
-    "Nearly" is the problem: the customer database is read-only as far as this
-    product is concerned, and that has to hold even on the replies where it
-    does not.
-
-    The whole tree is walked, not just the root. `WITH x AS (DELETE FROM t
-    RETURNING *) SELECT * FROM x` parses as a SELECT -- the DELETE is inside
-    it -- and `SELECT * FROM t FOR UPDATE` is a SELECT that locks rows.
-    """
-    try:
-        parsed = sqlglot.parse(sql, dialect="postgres")
-    except sqlglot.ParseError as exc:
-        raise UnsafeQuery("The generated query could not be parsed.") from exc
-
-    statements = [statement for statement in parsed if statement is not None]
-    if len(statements) != 1:
-        raise UnsafeQuery("The generated query was more than one statement.")
-
-    statement = statements[0]
-    if not isinstance(statement, exp.Query):
-        raise UnsafeQuery("The generated query was not a SELECT.")
-
-    for node in statement.walk():
-        if isinstance(node, _FORBIDDEN):
-            raise UnsafeQuery("The generated query was not read-only.")
+from app.services import sql_guard
+from app.services.query_executor import QueryExecutor
+from app.services.quota import QuotaService
 
 
 class QueryService:
@@ -79,6 +38,7 @@ class QueryService:
 
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
+        self.quota = QuotaService(session)
 
     async def ask(
         self,
@@ -94,11 +54,27 @@ class QueryService:
         is worth having afterwards, and the answer is worthless if the record
         of it was lost when the request ended.
         """
-        completion = await llm.generate(question=question, schema_doc=schema_doc)
+        allowance = await self.quota.allowance(project.owner_id)
+        self.quota.assert_can_ask(allowance)
+        plan = allowance.plan
+
+        # The project says the customer is willing to write to its own
+        # database; the plan says what we sell. Both have to say yes, so
+        # neither can answer for the other.
+        writes_allowed = project.writes_enabled and plan.allows_writes
+
+        completion = await llm.generate(
+            question=question,
+            schema_doc=schema_doc,
+            writes_enabled=writes_allowed,
+        )
         answer = llm.parse_result(
             completion.text, finish_reason=completion.finish_reason
         )
-        assert_read_only(answer["sql"])
+        sql_guard.assert_safe(
+            sql_guard.inspect(answer["sql"]),
+            writes_enabled=writes_allowed,
+        )
 
         record = Query(
             project_id=project.id,
@@ -128,4 +104,86 @@ class QueryService:
             "completion_tokens": completion.completion_tokens,
             "status": record.status,
             "created_at": record.created_at,
+        }
+
+    async def execute(
+        self,
+        project: Project,
+        query_id: uuid.UUID,
+        *,
+        limit: int,
+        confirmed: bool,
+        executor: QueryExecutor,
+    ) -> dict:
+        """Run a query this project generated earlier, and return the rows.
+
+        The SQL is checked again here, not only when it was generated. The
+        check costs nothing, and the statement that runs is not necessarily
+        the statement that was written -- anything able to change a row
+        between the two is a hole in the guarantee.
+
+        A write needs two things: a project that is allowed to write, and a
+        caller that says it means it. The second is not ceremony. A read can
+        be repeated and a write cannot, and the difference between "run the
+        query I was shown" and "run whatever you have" is one field.
+
+        A write also needs a plan that includes writes. The customer's own
+        setting says they are willing; the plan says what the product sells.
+        """
+        record = await self.session.scalar(
+            select(Query).where(
+                Query.id == query_id,
+                Query.project_id == project.id,
+            )
+        )
+        if record is None:
+            raise QueryNotFound("No such query for this project.")
+
+        plan = await self.quota.plan_for(project.owner_id)
+        writes_allowed = project.writes_enabled and plan.allows_writes
+
+        statement = sql_guard.inspect(record.sql)
+
+        if statement.is_write:
+            if not plan.allows_writes:
+                raise PlanNotAllowed(
+                    f"Your {plan.label} plan does not include write access. "
+                    "Upgrade the plan to run queries that change data."
+                )
+            if not project.writes_enabled:
+                raise WritesDisabled(
+                    "This project does not allow queries that change data."
+                )
+            if not confirmed:
+                raise WriteNotConfirmed(
+                    "This query changes data. Send it again with confirm: true."
+                )
+
+        self.quota.assert_rows_allowed(plan, limit)
+
+        sql_guard.assert_safe(statement, writes_enabled=writes_allowed)
+
+        result = await executor.execute(
+            project,
+            statement,
+            limit=limit,
+            max_rows=plan.max_rows,
+            timeout_ms=plan.execution_timeout_ms,
+        )
+
+        record.executed_at = result.executed_at
+        record.row_count = result.row_count
+        record.execution_ms = result.execution_ms
+        await self.session.flush()
+
+        return {
+            "query_id": record.id,
+            "sql": record.sql,
+            "columns": result.columns,
+            "rows": result.rows,
+            "row_count": result.row_count,
+            "truncated": result.truncated,
+            "is_write": result.is_write,
+            "execution_ms": result.execution_ms,
+            "executed_at": result.executed_at,
         }

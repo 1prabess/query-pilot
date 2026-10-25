@@ -11,6 +11,7 @@ from app.models.user import User
 from app.services.auth import AuthError, AuthService
 from app.services.project import ProjectService
 from app.services.query import QueryService
+from app.services.query_executor import QueryExecutor, get_query_executor
 from app.services.quota import QuotaService
 from app.services.schema_service import SchemaService
 from app.services.subscription import SubscriptionService
@@ -61,6 +62,10 @@ def get_quota_service(session: DbSession) -> QuotaService:
 
 
 QuotaSvc = Annotated[QuotaService, Depends(get_quota_service)]
+
+# The executor opens and closes its own connections to the customer's
+# database, so it has no session of ours to hold.
+ExecutorSvc = Annotated[QueryExecutor, Depends(get_query_executor)]
 
 # The LLM service is built on first use and shared by every request, so it
 # takes no session -- it has no database of its own to close.

@@ -54,6 +54,13 @@ class Settings(BaseSettings):
 
     AI_MAX_OUTPUT_TOKENS: int = Field(default=4096, ge=256, le=32_000)
 
+    # How long a query may run against the customer's database before we
+    # give up on it. This is the ceiling for every plan: the plan sets what
+    # its own tier is allowed, and this holds all of them down. Lower it to
+    # squeeze every tier, raise it to let the paid tiers use their longer
+    # timeouts.
+    QUERY_EXECUTION_TIMEOUT_MS: int = Field(default=60_000, ge=100, le=600_000)
+
     @property
     def is_production(self) -> bool:
         return self.ENVIRONMENT == "production"
