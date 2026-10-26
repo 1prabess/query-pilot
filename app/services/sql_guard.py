@@ -22,8 +22,8 @@ from app.core.errors import UnsafeQuery
 # The statements that change rows.
 #
 # `Insert` is spelled out alongside the others because sqlglot makes it a
-# subclass of `DDL` rather than of `DML`: it changes data wearing a change
-# to schema's clothes, and a check for `DDL` alone would call it one.
+# subclass of `DDL` rather than of `DML`: it changes rows, and a check for
+# `DDL` alone would call it a schema change.
 _WRITE_NODES = (exp.Insert, exp.Update, exp.Delete, exp.Merge)
 
 # The statements that are never acceptable, in write mode as much as out of
