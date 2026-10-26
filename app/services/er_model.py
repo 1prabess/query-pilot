@@ -286,7 +286,7 @@ def _through(name: str, table: dict, tables: dict[str, dict]) -> list[ErRelation
         return []
 
     ends = []
-    for foreign_key in foreign_keys:
+    for index, foreign_key in enumerate(foreign_keys):
         parent_table = _parent_table(foreign_key)
         if parent_table not in tables:
             return []
@@ -295,7 +295,10 @@ def _through(name: str, table: dict, tables: dict[str, dict]) -> list[ErRelation
                 foreign_key,
                 ErEnd(
                     entity=f"table:{parent_table}",
-                    cardinality="N",
+                    # A many-to-many is counted apart at its two ends: M on
+                    # one side and N on the other. Two N's would read as a
+                    # pair of one-to-many relationships.
+                    cardinality="M" if index == 0 else "N",
                     role=_role_label(foreign_key["columns"]),
                 ),
             )

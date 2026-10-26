@@ -10,8 +10,10 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-# How many of the far end a relationship points at.
-Cardinality = Literal["1", "N", "0..1"]
+# How many of the far end a relationship points at. "M" is the other half
+# of a many-to-many: the two ends are counted apart, so the reader can see
+# that the junction is not a pair of one-to-many relationships.
+Cardinality = Literal["1", "N", "M", "0..1"]
 
 
 class ErAttribute(BaseModel):
