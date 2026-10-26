@@ -11,6 +11,7 @@ from app.llm.service import LLMService, get_llm_service
 from app.models.user import User
 from app.services.admin import AdminService
 from app.services.auth import AuthError, AuthService
+from app.services.er_service import ErService
 from app.services.project import ProjectService
 from app.services.query import QueryService
 from app.services.query_executor import QueryExecutor, get_query_executor
@@ -49,6 +50,13 @@ def get_schema_service(session: DbSession) -> SchemaService:
 
 
 SchemaSvc = Annotated[SchemaService, Depends(get_schema_service)]
+
+
+def get_er_service(session: DbSession) -> ErService:
+    return ErService(session)
+
+
+ErSvc = Annotated[ErService, Depends(get_er_service)]
 
 
 def get_query_service(session: DbSession) -> QueryService:

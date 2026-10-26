@@ -5,6 +5,7 @@ from app.core.config import get_settings
 from app.core.errors import LLMError, LLMUnavailable
 from app.llm.base import TRUNCATED_REASONS, Completion, Provider, explain
 from app.llm.context import budget_context
+from app.llm.er_prompts import build_er_prompt
 from app.llm.gemini import Gemini
 from app.llm.ollama import Ollama
 from app.llm.parse import _strip_fence, parse_json_response, recover_sql
@@ -38,6 +39,15 @@ class LLMService:
         if choice == "ollama":
             return [Ollama(self.settings)]
         return [Gemini(self.settings), Ollama(self.settings)]
+
+    @property
+    def is_configured(self) -> bool:
+        """Whether a provider is there to answer.
+
+        The ER diagram is worth having without a model: the schema says what
+        the entities and the relationships are. The model only names them.
+        """
+        return self._provider is not None
 
     def _unavailable_message(self) -> str:
         """Say what is missing, rather than only that something is."""
@@ -177,6 +187,39 @@ class LLMService:
             raise LLMError(explain(exc)) from exc
 
         return completion
+
+    async def annotate_er(self, *, schema_doc: dict) -> dict[str, Any]:
+        """Ask the model what the diagram should call things.
+
+        The reply is the raw JSON the model gave, not a validated model of
+        the diagram. The schema is the answer key, and `apply_annotations`
+        checks every name in the reply against it -- so a model that names a
+        relationship that is not in the schema costs nothing but the call.
+        """
+        if self._provider is None:
+            raise LLMUnavailable(self._unavailable_message())
+
+        system, prompt = build_er_prompt(schema_doc)
+        budget = self._budgets()[1]
+
+        try:
+            completion = await self._provider.complete(
+                system,
+                prompt,
+                max_output_tokens=budget,
+            )
+        except LLMError:
+            raise
+        except Exception as exc:
+            raise LLMError(explain(exc)) from exc
+
+        parsed = parse_json_response(completion.text)
+        if not isinstance(parsed, dict):
+            raise LLMError(
+                "The AI did not return the diagram labels in the expected "
+                "JSON format. The diagram is available without them."
+            )
+        return parsed
 
 
 _llm_service: LLMService | None = None
