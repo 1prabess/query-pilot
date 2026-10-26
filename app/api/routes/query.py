@@ -33,7 +33,7 @@ async def ask_query(
 ) -> QueryResponse:
     """Answer a question about this project's database, in SQL."""
     project = await schema_svc.owned_project(user, project_id)
-    schema_doc = await schema_svc.get(project)
+    schema_doc = await schema_svc.get(project, captured_by=user.id)
 
     answer = await svc.ask(
         project, body.question, schema_doc=schema_doc, llm=llm

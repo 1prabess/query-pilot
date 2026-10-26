@@ -20,6 +20,7 @@ import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import (
@@ -31,13 +32,17 @@ from app.core.errors import (
     SchemaTooLarge,
 )
 from app.models.project import Project
+from app.models.schema_change import SchemaChange
+from app.models.schema_version import SchemaVersion
 from app.models.user import User
 from app.services.project import get_owned_project
+from app.services.schema_diff import BREAKING, diff_documents
 from app.services.schema_document import (
     SOURCE_DUMP,
     SOURCE_INTROSPECTION,
     build_document,
 )
+from app.services.schema_impact import affected_queries, column_references
 from app.services.schema_introspector import IntrospectionError, introspect_schema
 from app.services.schema_parser import SchemaParseError, parse_pg_dump
 
@@ -63,7 +68,9 @@ class SchemaService:
             self.session, owner, project_id, with_connection=True
         )
 
-    async def upload(self, project: Project, raw: bytes) -> dict:
+    async def upload(
+        self, project: Project, raw: bytes, *, captured_by: uuid.UUID | None = None
+    ) -> dict:
         """Read a dump and store it as this project's schema."""
         if len(raw) > MAX_UPLOAD_BYTES:
             raise SchemaTooLarge("The upload is over the size limit.")
@@ -82,10 +89,14 @@ class SchemaService:
             raise NoSchemaTables("The upload held no tables for this project.")
 
         document = build_document(SOURCE_DUMP, tables)
-        await self.store(project, document, source=SOURCE_DUMP)
+        await self.store(
+            project, document, source=SOURCE_DUMP, captured_by=captured_by
+        )
         return document
 
-    async def introspect(self, project: Project) -> dict:
+    async def introspect(
+        self, project: Project, *, captured_by: uuid.UUID | None = None
+    ) -> dict:
         """Ask the customer's database what its schema is, and store it."""
         if project.connection is None:
             raise NoConnection("This project has no database connection saved yet.")
@@ -99,11 +110,17 @@ class SchemaService:
             ) from exc
 
         document = build_document(SOURCE_INTROSPECTION, tables)
-        await self.store(project, document, source=SOURCE_INTROSPECTION)
+        await self.store(
+            project, document, source=SOURCE_INTROSPECTION, captured_by=captured_by
+        )
         return document
 
     async def get(
-        self, project: Project, *, max_age_seconds: int | None = STALE_AFTER_SECONDS
+        self,
+        project: Project,
+        *,
+        max_age_seconds: int | None = STALE_AFTER_SECONDS,
+        captured_by: uuid.UUID | None = None,
     ) -> dict:
         """The stored schema, refreshed if it has gone stale.
 
@@ -120,7 +137,7 @@ class SchemaService:
 
         if self._is_stale(project, max_age_seconds):
             try:
-                return await self.introspect(project)
+                return await self.introspect(project, captured_by=captured_by)
             except CustomerDatabaseUnreachable:
                 logger.warning(
                     "Schema refresh failed for project %s; serving the stored schema.",
@@ -129,12 +146,132 @@ class SchemaService:
 
         return project.schema_doc
 
-    async def store(self, project: Project, document: dict, *, source: str) -> Project:
+    async def store(
+        self,
+        project: Project,
+        document: dict,
+        *,
+        source: str,
+        captured_by: uuid.UUID | None = None,
+    ) -> Project:
+        """Store the document, and record what changed since the last one.
+
+        A schema that has not changed does not get a new version. The version
+        table holds the states a project has been in, not the number of times
+        it was looked at.
+
+        A project that has a schema but no versions gets one now, whatever
+        the schema looks like: its first version is the baseline everything
+        else is measured against.
+        """
+        previous = project.schema_doc
+        differences = diff_documents(previous, document)
+
         project.schema_doc = document
         project.schema_source = source
         project.schema_fetched_at = datetime.now(UTC)
         await self.session.flush()
+
+        latest = await self.session.scalar(
+            select(func.max(SchemaVersion.version)).where(
+                SchemaVersion.project_id == project.id
+            )
+        )
+        if latest is None or differences:
+            await self._record(
+                project, document, source, differences, captured_by, int(latest or 0) + 1
+            )
+
         return project
+
+    async def versions(
+        self, project_id: uuid.UUID, *, limit: int, offset: int
+    ) -> tuple[list[SchemaVersion], int]:
+        """The states this project's schema has been in, newest first."""
+        rows = await self.session.scalars(
+            select(SchemaVersion)
+            .where(SchemaVersion.project_id == project_id)
+            .order_by(SchemaVersion.version.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        total = await self.session.scalar(
+            select(func.count())
+            .select_from(SchemaVersion)
+            .where(SchemaVersion.project_id == project_id)
+        )
+        return list(rows), int(total or 0)
+
+    async def changes(
+        self, project_id: uuid.UUID, *, limit: int, offset: int
+    ) -> tuple[list[SchemaChange], int]:
+        """The changes this project's schema has been through, newest first."""
+        rows = await self.session.scalars(
+            select(SchemaChange)
+            .where(SchemaChange.project_id == project_id)
+            .order_by(SchemaChange.version.desc(), SchemaChange.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        total = await self.session.scalar(
+            select(func.count())
+            .select_from(SchemaChange)
+            .where(SchemaChange.project_id == project_id)
+        )
+        return list(rows), int(total or 0)
+
+    async def impact(
+        self, project_id: uuid.UUID, changes: list[SchemaChange]
+    ) -> dict[uuid.UUID, list[uuid.UUID]]:
+        """Which saved queries each breaking change breaks.
+
+        Only the breaking ones. An added column breaks nothing that was
+        there before it.
+        """
+        breaking = [change for change in changes if change.severity == BREAKING]
+        if not breaking:
+            return {}
+
+        references = await column_references(self.session, project_id)
+        return {
+            change.id: affected_queries(
+                references, change.table_name, change.column_name
+            )
+            for change in breaking
+        }
+
+    async def _record(
+        self,
+        project: Project,
+        document: dict,
+        source: str,
+        differences: list,
+        captured_by: uuid.UUID | None,
+        version: int,
+    ) -> None:
+        """Write the version, and the changes that came with it."""
+        self.session.add(
+            SchemaVersion(
+                project_id=project.id,
+                version=version,
+                captured_by=captured_by,
+                source=source,
+                document=document,
+                change_count=len(differences),
+            )
+        )
+        for difference in differences:
+            self.session.add(
+                SchemaChange(
+                    project_id=project.id,
+                    version=version,
+                    kind=difference.kind,
+                    severity=difference.severity,
+                    table_name=difference.table,
+                    column_name=difference.column,
+                    detail=difference.detail,
+                )
+            )
 
     def _is_stale(
         self, project: Project, max_age_seconds: int | None
