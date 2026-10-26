@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import security
 from app.core.config import get_settings
-from app.core.errors import AppError
+from app.core.errors import AccountRevoked, AppError
 from app.core.security import hash_password
 from app.models.magic_link import MagicLink
 from app.models.refresh_token import RefreshToken
@@ -64,9 +64,7 @@ class AuthService:
             password_hash=await hash_password(password),
         )
         self.session.add(user)
-        # flush, not commit: the INSERT needs a row before `_issue` can build a
-        # RefreshToken with a real user_id. Committing here would end the unit of
-        # work two statements early.
+
         await self.session.flush()
 
         # Everybody starts on the free plan. The row is written here rather
@@ -95,6 +93,9 @@ class AuthService:
         if user is None or not verified or not user.is_active:
             raise AuthError("Invalid email or password.")
 
+        if user.revoked_at is not None:
+            raise AccountRevoked("This account has been revoked.")
+
         return await self._issue(user, family_id=uuid.uuid4())
 
     async def refresh(self, raw_token: str) -> TokenPair:
@@ -122,6 +123,9 @@ class AuthService:
         user = await self.session.get(User, row.user_id)
         if user is None or not user.is_active:
             raise AuthError("Invalid or expired session.")
+
+        if user.revoked_at is not None:
+            raise AccountRevoked("This account has been revoked.")
 
         row.revoked_at = datetime.now(UTC)
         return await self._issue(user, family_id=row.family_id)
@@ -198,6 +202,9 @@ class AuthService:
         user = await self.session.get(User, row)
         if user is None or not user.is_active:
             raise AuthError("That link is invalid or has already been used.")
+
+        if user.revoked_at is not None:
+            raise AccountRevoked("This account has been revoked.")
 
         # Proof of control of the inbox, which is what this column means.
         user.email_verified = True

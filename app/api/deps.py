@@ -4,7 +4,7 @@ from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import AdminRequired
+from app.core.errors import AccountRevoked, AdminRequired
 from app.core.security import decode_access_token
 from app.db.session import get_db
 from app.llm.service import LLMService, get_llm_service
@@ -95,7 +95,14 @@ async def get_current_user(
 
     user = await session.get(User, user_id)
 
-    if user is None or not user.is_active:
+    if user is None:
+        raise AuthError("Invalid or expired token.")
+
+    # Revoked first: a revoked account also has is_active cleared.
+    if user.revoked_at is not None:
+        raise AccountRevoked("This account has been revoked.")
+
+    if not user.is_active:
         raise AuthError("Invalid or expired token.")
 
     return user

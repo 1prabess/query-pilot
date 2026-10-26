@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.subscription import UsageResponse
 
@@ -21,6 +21,9 @@ class AdminUserSummary(BaseModel):
     email: str
     role: str
     is_active: bool
+    revoked_at: datetime | None
+    revoked_by: UUID | None
+    revoked_reason: str | None
     email_verified: bool
     created_at: datetime
     tier: str
@@ -50,3 +53,14 @@ class AdminUserDetail(AdminUserSummary):
     usage: UsageResponse
     provider_customer_id: str | None
     provider_subscription_id: str | None
+
+
+class SetRevokedRequest(BaseModel):
+    """Close an account, or reopen it.
+
+    `reason` is written next to the record, for whoever reads the account
+    later. It is optional.
+    """
+
+    revoked: bool
+    reason: str | None = Field(default=None, max_length=500)

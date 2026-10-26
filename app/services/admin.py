@@ -1,6 +1,6 @@
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import Row, Select, distinct, func, select
@@ -22,6 +22,9 @@ class UserSummary:
     email: str
     role: str
     is_active: bool
+    revoked_at: datetime | None
+    revoked_by: uuid.UUID | None
+    revoked_reason: str | None
     email_verified: bool
     created_at: datetime
     tier: str
@@ -85,6 +88,43 @@ class AdminService:
             allowance=allowance,
         )
 
+    async def set_revoked(
+        self,
+        user_id: uuid.UUID,
+        *,
+        revoked: bool,
+        reason: str | None = None,
+        revoked_by: uuid.UUID | None = None,
+    ) -> UserDetail | None:
+        """Ban an account, or lift the ban.
+
+        Revoking stamps the audit record -- when, who, why -- and deactivates
+        the account in the same transaction. Lifting the ban clears the
+        record.
+        """
+        user = await self.session.get(User, user_id)
+        if user is None:
+            return None
+
+        already_revoked = not user.is_user_active
+        if revoked == already_revoked:
+            # Already in the state asked for: nothing to stamp.
+            return await self.get_user(user_id)
+
+        if revoked:
+            user.revoked_at = datetime.now(UTC)
+            user.revoked_by = revoked_by
+            user.revoked_reason = reason
+            user.is_active = False
+        else:
+            user.revoked_at = None
+            user.revoked_by = None
+            user.revoked_reason = None
+            user.is_active = True
+
+        await self.session.flush()
+        return await self.get_user(user_id)
+
 
 # The tail is `Any` because the checker gives up naming column types past
 # nine of them -- `select()` of ten columns already infers `*tuple[Any, ...]`.
@@ -94,6 +134,9 @@ def _summary_query() -> Select[
     str,
     str,
     bool,
+    datetime | None,
+    uuid.UUID | None,
+    str | None,
     bool,
     datetime,
     str,
@@ -116,6 +159,9 @@ def _summary_query() -> Select[
             User.email,
             User.role,
             User.is_active,
+            User.revoked_at,
+            User.revoked_by,
+            User.revoked_reason,
             User.email_verified,
             User.created_at,
             Subscription.tier,
@@ -147,6 +193,9 @@ def _summary_from(
         str,
         str,
         bool,
+        datetime | None,
+        uuid.UUID | None,
+        str | None,
         bool,
         datetime,
         str,
@@ -166,6 +215,9 @@ def _summary_from(
         email=row.email,
         role=row.role,
         is_active=row.is_active,
+        revoked_at=row.revoked_at,
+        revoked_by=row.revoked_by,
+        revoked_reason=row.revoked_reason,
         email_verified=row.email_verified,
         created_at=row.created_at,
         tier=row.tier or FREE,

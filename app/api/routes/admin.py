@@ -3,15 +3,21 @@ from uuid import UUID
 from fastapi import APIRouter, Query
 
 from app.api.deps import AdminSvc, AdminUser, DbSession, SubscriptionSvc
-from app.core.errors import UserNotFound
+from app.core.errors import CannotRevokeSelf, UserNotFound
 from app.models.user import User
-from app.schemas.admin import AdminUserDetail, AdminUserListResponse, AdminUserSummary
+from app.schemas.admin import (
+    AdminUserDetail,
+    AdminUserListResponse,
+    AdminUserSummary,
+    SetRevokedRequest,
+)
 from app.schemas.subscription import (
     PlanResponse,
     SetPlanRequest,
     SubscriptionResponse,
     UsageResponse,
 )
+from app.services.admin import UserDetail
 from app.services.plans import get_plan
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -52,13 +58,36 @@ async def get_user(
     if detail is None:
         raise UserNotFound("No such user.")
 
-    summary = AdminUserSummary.model_validate(detail.summary)
-    return AdminUserDetail(
-        **summary.model_dump(),
-        usage=UsageResponse.of(detail.allowance),
-        provider_customer_id=detail.provider_customer_id,
-        provider_subscription_id=detail.provider_subscription_id,
+    return _detail_response(detail)
+
+
+@router.patch("/users/{user_id}", response_model=AdminUserDetail)
+async def set_user_revoked(
+    user_id: UUID,
+    body: SetRevokedRequest,
+    session: DbSession,
+    svc: AdminSvc,
+    admin: AdminUser,
+) -> AdminUserDetail:
+    """Close an account, or reopen it.
+
+    Closing is instant: the account row is read on every request, so the
+    next one is turned away even though its token has not expired.
+    """
+    if body.revoked and user_id == admin.id:
+        raise CannotRevokeSelf("You cannot revoke your own account.")
+
+    detail = await svc.set_revoked(
+        user_id,
+        revoked=body.revoked,
+        reason=body.reason,
+        revoked_by=admin.id,
     )
+    if detail is None:
+        raise UserNotFound("No such user.")
+
+    await session.commit()
+    return _detail_response(detail)
 
 
 @router.patch("/users/{user_id}/subscription", response_model=SubscriptionResponse)
@@ -97,4 +126,14 @@ async def set_user_plan(
         period_start=subscription.period_start,
         period_end=subscription.period_end,
         plan=PlanResponse.of(plan),
+    )
+
+
+def _detail_response(detail: UserDetail) -> AdminUserDetail:
+    summary = AdminUserSummary.model_validate(detail.summary)
+    return AdminUserDetail(
+        **summary.model_dump(),
+        usage=UsageResponse.of(detail.allowance),
+        provider_customer_id=detail.provider_customer_id,
+        provider_subscription_id=detail.provider_subscription_id,
     )

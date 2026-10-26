@@ -122,3 +122,10 @@ class AdminRequired(AppError, status_code=403, code="admin_required"):
 class UserNotFound(AppError, status_code=404, code="user_not_found"):
     """No account with that id."""
 
+
+class AccountRevoked(AppError, status_code=403, code="account_revoked"):
+    """This account has been revoked."""
+
+
+class CannotRevokeSelf(AppError, status_code=400, code="cannot_revoke_self"):
+    """An administrator cannot revoke their own account."""
