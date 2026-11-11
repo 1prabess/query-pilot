@@ -132,3 +132,11 @@ class Project(Base):
             raise NoConnection(
                 "This project has no database connection saved yet.")
         return self.connection.dsn_encrypted
+
+    @property
+    def schema_name(self) -> str:
+        """The schema this project's tables live in."""
+        if self.connection is None:
+            raise NoConnection(
+                "This project has no database connection saved yet.")
+        return self.connection.schema_name

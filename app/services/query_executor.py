@@ -94,6 +94,7 @@ class QueryExecutor:
         row_cap = MAX_ROWS if max_rows is None else min(MAX_ROWS, max_rows)
         limit = max(1, min(limit, row_cap))
         dsn = project.decrypted_dsn()
+        schema_name = project.schema_name
         started = time.perf_counter()
 
         try:
@@ -109,7 +110,7 @@ class QueryExecutor:
 
         try:
             columns, column_types, rows, row_count, truncated = await self._run(
-                connection, statement, limit, timeout_ms
+                connection, statement, limit, timeout_ms, schema_name
             )
         finally:
             await connection.close()
@@ -131,12 +132,15 @@ class QueryExecutor:
         statement: Statement,
         limit: int,
         timeout_ms: int | None,
+        schema_name: str,
     ) -> tuple[list[str], list[str], list[list[Any]], int, bool]:
         """Run the statement, in whichever transaction it needs."""
         try:
             if statement.is_write:
-                return await self._write(connection, statement, timeout_ms)
-            return await self._read(connection, statement, limit, timeout_ms)
+                return await self._write(connection, statement, timeout_ms, schema_name)
+            return await self._read(
+                connection, statement, limit, timeout_ms, schema_name
+            )
         except (TimeoutError, asyncpg.QueryCanceledError) as exc:
             raise QueryTimeout("The query took too long and was stopped.") from exc
         except asyncpg.PostgresError as exc:
@@ -164,6 +168,7 @@ class QueryExecutor:
         sql = _with_row_limit(statement.sql, limit + 1)
 
         async with connection.transaction():
+            await self._use_schema(connection, schema_name)
             await connection.execute("SET TRANSACTION READ ONLY")
             prepared = await connection.prepare(sql)
             attributes = prepared.get_attributes()
@@ -197,6 +202,7 @@ class QueryExecutor:
         worse than one that does not exist.
         """
         async with connection.transaction():
+            await self._use_schema(connection, schema_name)
             if not statement.has_returning:
                 status = await connection.execute(
                     statement.sql, timeout=self._timeout_seconds(timeout_ms)
@@ -227,6 +233,34 @@ class QueryExecutor:
         if timeout_ms is not None:
             ceiling_ms = min(ceiling_ms, timeout_ms)
         return ceiling_ms / 1000
+
+    async def _use_schema(
+        self, connection: asyncpg.Connection, schema_name: str
+    ) -> None:
+        """Put the project's schema on the search path, for this transaction.
+
+        The statements we run name their tables without a schema in front,
+        and that only resolves when the schema is on the search path. A
+        customer's role may have none: Neon hands out a role whose
+        search_path is empty, and there every unqualified name fails with
+        "relation does not exist" even though the table is right there.
+
+        The setting is local to the transaction, so it cannot reach another
+        customer through a pooled connection.
+        """
+        await connection.execute(
+            f"SET LOCAL search_path TO {_quote_identifier(schema_name)}"
+        )
+
+
+def _quote_identifier(name: str) -> str:
+    """A name, quoted the way Postgres quotes an identifier.
+
+    The name comes from the customer, so a quote inside it is doubled.
+    """
+    return '"' + name.replace('"', '""') + '"'
+
+
 def _with_row_limit(sql: str, limit: int) -> str:
     """The same statement, with a hard cap on the rows it may return.
 

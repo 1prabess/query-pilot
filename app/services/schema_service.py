@@ -104,7 +104,7 @@ class SchemaService:
         if project.connection is None:
             raise NoConnection("This project has no database connection saved yet.")
 
-        schema_name = project.connection.schema_name
+        schema_name = project.schema_name
         try:
             tables = await introspect_schema(project.decrypted_dsn(), schema_name)
         except IntrospectionError as exc:
