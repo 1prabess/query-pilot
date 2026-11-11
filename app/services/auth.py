@@ -12,6 +12,8 @@ from app.core.security import hash_password
 from app.models.magic_link import MagicLink
 from app.models.refresh_token import RefreshToken
 from app.models.subscription import Subscription
+from app.models.team import Team
+from app.models.team_membership import OWNER, TeamMembership
 from app.models.user import User
 from app.services.plans import ACTIVE, FREE
 
@@ -67,11 +69,28 @@ class AuthService:
 
         await self.session.flush()
 
+        # Every account has a team of its own from the start. Projects and
+        # plans belong to a team, so an account with no team would have
+        # nowhere to put either, and every route that needs one would need
+        # a branch for the account that has none.
+        team = Team(name=normalized)
+        self.session.add(team)
+        await self.session.flush()
+
+        self.session.add(
+            TeamMembership(
+                team_id=team.id,
+                user_id=user.id,
+                role=OWNER,
+                can_write=True,
+            )
+        )
+
         # Everybody starts on the free plan. The row is written here rather
         # than left to be made on first sight so that "which plan is this
-        # customer on" has one answer for every account, old and new.
+        # customer on" has one answer for every team, old and new.
         self.session.add(
-            Subscription(user_id=user.id, tier=FREE, status=ACTIVE)
+            Subscription(team_id=team.id, tier=FREE, status=ACTIVE)
         )
 
         return await self._issue(user, family_id=uuid.uuid4())

@@ -1,4 +1,4 @@
-"""The subscription: which plan a user is on, and how that changes.
+"""The subscription: which plan a team is on, and how that changes.
 
 Reading a subscription is a lookup. Changing one is a decision, and today
 only an administrator may make it -- which is what the paid period of this
@@ -39,25 +39,25 @@ class SubscriptionService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def get_for(self, user_id: uuid.UUID) -> Subscription:
+    async def get_for(self, team_id: uuid.UUID) -> Subscription:
         """The subscription row, creating the free one if it is missing.
 
-        A user who registered before this table existed has no row, and
-        their account has to work anyway. Rather than a migration that every
-        future user would have to repeat, the row is made on first sight.
+        A team created before this table existed has no row, and it has to
+        work anyway. Rather than a migration that every future team would
+        have to repeat, the row is made on first sight.
         """
         subscription = await self.session.scalar(
-            select(Subscription).where(Subscription.user_id == user_id)
+            select(Subscription).where(Subscription.team_id == team_id)
         )
         if subscription is None:
-            subscription = Subscription(user_id=user_id, tier=FREE, status=ACTIVE)
+            subscription = Subscription(team_id=team_id, tier=FREE, status=ACTIVE)
             self.session.add(subscription)
             await self.session.flush()
         return subscription
 
     async def set_plan(
         self,
-        user_id: uuid.UUID,
+        team_id: uuid.UUID,
         *,
         tier: str,
         status: str = ACTIVE,
@@ -66,7 +66,7 @@ class SubscriptionService:
         provider_customer_id: str | None = None,
         provider_subscription_id: str | None = None,
     ) -> Subscription:
-        """Put a user on a plan.
+        """Put a team on a plan.
 
         The tier name is checked rather than trusted. A typo in a payment
         provider's webhook must not become a plan nobody defined.
@@ -81,7 +81,7 @@ class SubscriptionService:
                 f"There is no subscription status called '{status}'."
             )
 
-        subscription = await self.get_for(user_id)
+        subscription = await self.get_for(team_id)
         subscription.tier = normalized
         subscription.status = normalized_status
         subscription.period_start = period_start

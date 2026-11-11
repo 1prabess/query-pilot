@@ -10,8 +10,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.session import Base
 
 if TYPE_CHECKING:
-    from app.models.project import Project
-    from app.models.subscription import Subscription
+    from app.models.team_membership import TeamMembership
 
 
 class User(Base):
@@ -55,12 +54,8 @@ class User(Base):
         nullable=True
     )
 
-    # Named as a registry string, not imported: Project imports this module,
-    # so a runtime import of Project here would be circular.
-    projects: Mapped[list["Project"]] = relationship(
-        "Project", back_populates="owner")
-    subscription: Mapped["Subscription | None"] = relationship(
-        "Subscription", back_populates="user", uselist=False, cascade="all, delete-orphan"
+    memberships: Mapped[list["TeamMembership"]] = relationship(
+        "TeamMembership", back_populates="user", cascade="all, delete-orphan"
     )
 
     @property

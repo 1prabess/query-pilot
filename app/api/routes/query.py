@@ -32,11 +32,11 @@ async def ask_query(
     user: CurrentUser,
 ) -> QueryResponse:
     """Answer a question about this project's database, in SQL."""
-    project = await schema_svc.owned_project(user, project_id)
+    project, membership = await schema_svc.project_for(user, project_id)
     schema_doc = await schema_svc.get(project, captured_by=user.id)
 
     answer = await svc.ask(
-        project, body.question, schema_doc=schema_doc, llm=llm
+        project, membership, body.question, schema_doc=schema_doc, llm=llm
     )
     await session.commit()
     return QueryResponse.model_validate(answer)
@@ -54,10 +54,11 @@ async def execute_query(
     body: ExecuteQueryRequest | None = None,
 ) -> ExecuteQueryResponse:
     """Run a generated query against this project's database, and return the rows."""
-    project = await schema_svc.owned_project(user, project_id)
+    project, membership = await schema_svc.project_for(user, project_id)
 
     result = await svc.execute(
         project,
+        membership,
         query_id,
         limit=body.limit if body is not None else DEFAULT_ROW_LIMIT,
         confirmed=body.confirm if body is not None else False,

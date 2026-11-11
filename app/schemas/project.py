@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class CreateProjectRequest(BaseModel):
     name: str = Field(min_length=1, max_length=200)
+    team_id: UUID | None = None
 
 
 class ProjectResponse(BaseModel):
@@ -14,6 +15,7 @@ class ProjectResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
+    team_id: UUID
     name: str
     writes_enabled: bool
     created_at: datetime

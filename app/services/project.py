@@ -6,7 +6,9 @@ from sqlalchemy.orm import selectinload
 
 from app.core.errors import AppError
 from app.models.project import Project
+from app.models.team_membership import TeamMembership
 from app.models.user import User
+from app.services import permissions
 from app.services.quota import QuotaService
 
 
@@ -16,34 +18,39 @@ class ProjectNotFound(AppError, status_code=404, code="project_not_found"):
     404 for both "no such project" and "not your project"""
 
 
-async def get_owned_project(
+async def get_project_membership(
     session: AsyncSession,
-    owner: User,
+    user: User,
     project_id: uuid.UUID,
     *,
     with_connection: bool = False,
-) -> Project:
-    """The project with that id, if it belongs to `owner`.
+) -> tuple[Project, TeamMembership]:
+    """The project with that id, and the caller's membership of its team.
 
     A plain function rather than a method so that every service which needs a
     project reaches for the same lookup. Two services asking the same question
     must not answer it two different ways.
+
+    The membership comes back with the project because the two are read
+    together: what the caller may do to a project is a fact about their
+    membership of the team that holds it, not about the project alone.
     """
-    statement = select(Project).where(
-        Project.id == project_id,
-        Project.owner_id == owner.id,
+    statement = (
+        select(Project, TeamMembership)
+        .join(TeamMembership, TeamMembership.team_id == Project.team_id)
+        .where(Project.id == project_id, TeamMembership.user_id == user.id)
     )
     if with_connection:
         statement = statement.options(selectinload(Project.connection))
 
-    project = await session.scalar(statement)
-    if project is None:
+    row = (await session.execute(statement)).first()
+    if row is None:
         raise ProjectNotFound("No such project.")
-    return project
+    return row[0], row[1]
 
 
 class ProjectService:
-    """Everything that reads or changes a user's projects.
+    """Everything that reads or changes a team's projects.
 
     The session arrives in the constructor and every method uses it. Nothing
     in this class opens its own session.
@@ -59,18 +66,21 @@ class ProjectService:
         self.session = session
         self.quota = QuotaService(session)
 
-    async def create_project(self, owner: User, name: str) -> Project:
-        allowance = await self.quota.allowance(owner.id)
+    async def create_project(
+        self, membership: TeamMembership, name: str
+    ) -> Project:
+        """A new project in the team the membership belongs to."""
+        allowance = await self.quota.allowance_for_team(membership.team_id)
         self.quota.assert_can_create_project(allowance)
 
-        project = Project(owner_id=owner.id, name=name.strip())
+        project = Project(team_id=membership.team_id, name=name.strip())
         self.session.add(project)
 
         await self.session.flush()
         return project
 
-    async def list_projects(self, owner: User) -> list[Project]:
-        """Every project the owner has, oldest first.
+    async def list_projects(self, user: User) -> list[Project]:
+        """Every project in every team the caller belongs to, oldest first.
 
         The connections are not loaded, and that is the point of keeping the
         credential in its own table: listing projects must not decrypt a
@@ -78,18 +88,23 @@ class ProjectService:
         """
         result = await self.session.scalars(
             select(Project)
-            .where(Project.owner_id == owner.id)
+            .join(TeamMembership, TeamMembership.team_id == Project.team_id)
+            .where(TeamMembership.user_id == user.id)
             .order_by(Project.created_at)
         )
         return list(result.all())
 
-    async def get_project(self, owner: User, project_id: uuid.UUID) -> Project:
-        return await self._owned_project(owner, project_id)
+    async def get_project(
+        self, user: User, project_id: uuid.UUID, *, with_connection: bool = False
+    ) -> tuple[Project, TeamMembership]:
+        return await get_project_membership(
+            self.session, user, project_id, with_connection=with_connection
+        )
 
     async def set_connection(
         self,
-        owner: User,
-        project_id: uuid.UUID,
+        project: Project,
+        membership: TeamMembership,
         *,
         host: str,
         port: int,
@@ -105,7 +120,7 @@ class ProjectService:
         the connection, and the only way to get the password out is to decrypt
         the row, which happens when a query actually needs to run.
         """
-        project = await self._owned_project(owner, project_id, with_connection=True)
+        permissions.require(membership.role, permissions.MANAGE_DATABASES)
         project.set_connection(
             host=host,
             port=port,
@@ -118,30 +133,29 @@ class ProjectService:
         return project
 
     async def connection_details(
-        self, owner: User, project_id: uuid.UUID
+        self, project: Project, membership: TeamMembership
     ) -> dict:
         """The stored connection, minus the password."""
-        project = await self._owned_project(owner, project_id, with_connection=True)
+        permissions.require(membership.role, permissions.MANAGE_DATABASES)
         return project.connection_details()
 
     async def set_writes_enabled(
-        self, owner: User, project_id: uuid.UUID, *, enabled: bool
+        self,
+        project: Project,
+        membership: TeamMembership,
+        *,
+        enabled: bool,
     ) -> Project:
-        project = await self._owned_project(owner, project_id)
+        permissions.require(membership.role, permissions.MANAGE_DATABASES)
         project.writes_enabled = enabled
         await self.session.flush()
 
         await self.session.refresh(project, ["updated_at"])
         return project
 
-    async def delete_project(self, owner: User, project_id: uuid.UUID) -> None:
-        project = await self._owned_project(owner, project_id)
+    async def delete_project(
+        self, project: Project, membership: TeamMembership
+    ) -> None:
+        permissions.require(membership.role, permissions.MANAGE_DATABASES)
         await self.session.delete(project)
         await self.session.flush()
-
-    async def _owned_project(
-        self, owner: User, project_id: uuid.UUID, *, with_connection: bool = False
-    ) -> Project:
-        return await get_owned_project(
-            self.session, owner, project_id, with_connection=with_connection
-        )

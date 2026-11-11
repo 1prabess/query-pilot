@@ -18,6 +18,7 @@ from app.services.query_executor import QueryExecutor, get_query_executor
 from app.services.quota import QuotaService
 from app.services.schema_service import SchemaService
 from app.services.subscription import SubscriptionService
+from app.services.team import TeamService
 
 bearer = HTTPBearer(auto_error=False)
 
@@ -79,6 +80,13 @@ def get_quota_service(session: DbSession) -> QuotaService:
 
 
 QuotaSvc = Annotated[QuotaService, Depends(get_quota_service)]
+
+
+def get_team_service(session: DbSession) -> TeamService:
+    return TeamService(session)
+
+
+TeamSvc = Annotated[TeamService, Depends(get_team_service)]
 
 # The executor opens and closes its own connections to the customer's
 # database, so it has no session of ours to hold.

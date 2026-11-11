@@ -2,7 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Response, status
 
-from app.api.deps import CurrentUser, DbSession, ProjectSvc
+from app.api.deps import CurrentUser, DbSession, ProjectSvc, TeamSvc
 from app.schemas.project import (
     ConnectionResponse,
     CreateProjectRequest,
@@ -16,9 +16,15 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 
 @router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
 async def create_project(
-    body: CreateProjectRequest, session: DbSession, svc: ProjectSvc, user: CurrentUser
+    body: CreateProjectRequest,
+    session: DbSession,
+    svc: ProjectSvc,
+    teams: TeamSvc,
+    user: CurrentUser,
 ) -> ProjectResponse:
-    project = await svc.create_project(user, body.name)
+    """A new project in one of the caller's teams."""
+    membership = await teams.resolve_membership(user.id, body.team_id)
+    project = await svc.create_project(membership, body.name)
     await session.commit()
     return ProjectResponse.model_validate(project)
 
@@ -27,6 +33,7 @@ async def create_project(
 async def list_projects(
     svc: ProjectSvc, user: CurrentUser
 ) -> list[ProjectResponse]:
+    """Every project in every team the caller belongs to."""
     projects = await svc.list_projects(user)
     return [ProjectResponse.model_validate(project) for project in projects]
 
@@ -35,7 +42,7 @@ async def list_projects(
 async def get_project(
     project_id: UUID,  svc: ProjectSvc, user: CurrentUser
 ) -> ProjectResponse:
-    project = await svc.get_project(user, project_id)
+    project, _ = await svc.get_project(user, project_id)
     return ProjectResponse.model_validate(project)
 
 
@@ -47,9 +54,12 @@ async def set_connection(
     svc: ProjectSvc,
     user: CurrentUser,
 ) -> ConnectionResponse:
+    project, membership = await svc.get_project(
+        user, project_id, with_connection=True
+    )
     project = await svc.set_connection(
-        user,
-        project_id,
+        project,
+        membership,
         host=body.host,
         port=body.port,
         database=body.database,
@@ -65,7 +75,10 @@ async def set_connection(
 async def get_connection(
     project_id: UUID, svc: ProjectSvc, user: CurrentUser
 ) -> ConnectionResponse:
-    details = await svc.connection_details(user, project_id)
+    project, membership = await svc.get_project(
+        user, project_id, with_connection=True
+    )
+    details = await svc.connection_details(project, membership)
     return ConnectionResponse(**details)
 
 
@@ -77,7 +90,10 @@ async def set_writes(
     svc: ProjectSvc,
     user: CurrentUser,
 ) -> ProjectResponse:
-    project = await svc.set_writes_enabled(user, project_id, enabled=body.enabled)
+    project, membership = await svc.get_project(user, project_id)
+    project = await svc.set_writes_enabled(
+        project, membership, enabled=body.enabled
+    )
     await session.commit()
     return ProjectResponse.model_validate(project)
 
@@ -86,6 +102,7 @@ async def set_writes(
 async def delete_project(
     project_id: UUID, session: DbSession, svc: ProjectSvc, user: CurrentUser
 ) -> Response:
-    await svc.delete_project(user, project_id)
+    project, membership = await svc.get_project(user, project_id)
+    await svc.delete_project(project, membership)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

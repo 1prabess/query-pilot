@@ -11,6 +11,7 @@ from app.schemas.schema import (
     SchemaVersionListResponse,
     SchemaVersionResponse,
 )
+from app.services import permissions
 from app.services.schema_diff import summarize
 from app.services.schema_service import MAX_UPLOAD_BYTES
 
@@ -30,7 +31,8 @@ async def upload_schema(
     user: CurrentUser,
 ) -> SchemaDocument:
     """Read a `pg_dump` of the customer's database and store it as the schema."""
-    project = await svc.owned_project(user, project_id)
+    project, membership = await svc.project_for(user, project_id)
+    permissions.require(membership.role, permissions.MANAGE_DATABASES)
     raw = await file.read(MAX_UPLOAD_BYTES + 1)
 
     document = await svc.upload(project, raw, captured_by=user.id)
@@ -50,7 +52,7 @@ async def introspect_schema(
     user: CurrentUser,
 ) -> SchemaDocument:
     """Ask the customer's database what its schema is, and store the answer."""
-    project = await svc.owned_project(user, project_id)
+    project, _ = await svc.project_for(user, project_id)
 
     document = await svc.introspect(project, captured_by=user.id)
     await session.commit()
@@ -74,7 +76,7 @@ async def get_schema(
     introspection is refreshed from the customer's database once it is an hour
     old, and that refresh has to be persisted.
     """
-    project = await svc.owned_project(user, project_id)
+    project, _ = await svc.project_for(user, project_id)
 
     document = await svc.get(project, captured_by=user.id)
     await session.commit()
@@ -95,7 +97,7 @@ async def list_schema_versions(
     A version is written when the schema changes, so this is the list of
     changes with the schema each of them produced.
     """
-    await svc.owned_project(user, project_id)
+    await svc.project_for(user, project_id)
 
     versions, total = await svc.versions(project_id, limit=limit, offset=offset)
     return SchemaVersionListResponse(
@@ -122,7 +124,7 @@ async def list_schema_changes(
     A breaking change names the saved questions that referred to the column
     it touched, because those are the answers that will now fail.
     """
-    await svc.owned_project(user, project_id)
+    await svc.project_for(user, project_id)
 
     changes, total = await svc.changes(project_id, limit=limit, offset=offset)
     affected = await svc.impact(project_id, changes)

@@ -9,15 +9,15 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.session import Base
 
 if TYPE_CHECKING:
-    from app.models.user import User
+    from app.models.team import Team
 
 
 class Subscription(Base):
-    """Which plan a user is on.
+    """Which plan a team is on.
 
-    One row per user. The row is the answer to "what may this customer do",
-    and it is deliberately a separate table from the user: the user is who
-    somebody is, the subscription is what they have bought.
+    One row per team. The row is the answer to "what may this customer do",
+    and it is deliberately a separate table from the team: the team is who is
+    working together, the subscription is what they have bought.
 
     The provider columns are empty until a payment provider is connected.
     When one is, it fills them in and the tier comes from that provider's
@@ -32,9 +32,9 @@ class Subscription(Base):
         default=uuid.uuid4,
         server_default=func.gen_random_uuid(),
     )
-    user_id: Mapped[uuid.UUID] = mapped_column(
+    team_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
+        ForeignKey("teams.id", ondelete="CASCADE"),
         nullable=False,
         unique=True,
     )
@@ -69,4 +69,4 @@ class Subscription(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    user: Mapped["User"] = relationship("User", back_populates="subscription")
+    team: Mapped["Team"] = relationship("Team", back_populates="subscription")

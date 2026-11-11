@@ -23,6 +23,12 @@ class Query(Base):
         nullable=False,
         index=True,
     )
+    author_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     question: Mapped[str] = mapped_column(Text, nullable=False, default="")
     sql: Mapped[str] = mapped_column(Text, nullable=False)

@@ -1,6 +1,8 @@
+from uuid import UUID
+
 from fastapi import APIRouter
 
-from app.api.deps import CurrentUser, QuotaSvc, SubscriptionSvc
+from app.api.deps import CurrentUser, QuotaSvc, SubscriptionSvc, TeamSvc
 from app.schemas.subscription import (
     PlanResponse,
     SubscriptionResponse,
@@ -24,16 +26,24 @@ async def list_plans() -> list[PlanResponse]:
 
 @router.get("/subscription", response_model=SubscriptionResponse)
 async def my_subscription(
-    user: CurrentUser, svc: SubscriptionSvc, quota: QuotaSvc
+    user: CurrentUser,
+    svc: SubscriptionSvc,
+    quota: QuotaSvc,
+    teams: TeamSvc,
+    team_id: UUID | None = None,
 ) -> SubscriptionResponse:
-    """The plan this account is on.
+    """The plan this team is on.
 
-    The plan shown is the one the account actually gets, which is not always
-    the one the subscription names: a cancelled or unpaid subscription falls
-    back to the free plan.
+    A plan belongs to a team, so the answer is about one of them. Without a
+    team named, it is the caller's default team.
+
+    The plan shown is the one the team actually gets, which is not always the
+    one the subscription names: a cancelled or unpaid subscription falls back
+    to the free plan.
     """
-    subscription = await svc.get_for(user.id)
-    plan = await quota.plan_for(user.id)
+    membership = await teams.resolve_membership(user.id, team_id)
+    subscription = await svc.get_for(membership.team_id)
+    plan = await quota.plan_for_team(membership.team_id)
     return SubscriptionResponse(
         tier=subscription.tier,
         status=subscription.status,
@@ -44,6 +54,11 @@ async def my_subscription(
 
 
 @router.get("/usage", response_model=UsageResponse)
-async def my_usage(user: CurrentUser, quota: QuotaSvc) -> UsageResponse:
-    """What this account has used this period, and what it is allowed."""
-    return UsageResponse.of(await quota.allowance(user.id))
+async def my_usage(
+    user: CurrentUser, quota: QuotaSvc, teams: TeamSvc, team_id: UUID | None = None
+) -> UsageResponse:
+    """What this team has used this period, and what it is allowed."""
+    membership = await teams.resolve_membership(user.id, team_id)
+    return UsageResponse.of(
+        await quota.allowance_for_team(membership.team_id)
+    )

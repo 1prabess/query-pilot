@@ -34,8 +34,9 @@ from app.core.errors import (
 from app.models.project import Project
 from app.models.schema_change import SchemaChange
 from app.models.schema_version import SchemaVersion
+from app.models.team_membership import TeamMembership
 from app.models.user import User
-from app.services.project import get_owned_project
+from app.services.project import get_project_membership
 from app.services.schema_diff import BREAKING, diff_documents
 from app.services.schema_document import (
     SOURCE_DUMP,
@@ -58,14 +59,16 @@ class SchemaService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def owned_project(self, owner: User, project_id: uuid.UUID) -> Project:
-        """The project, with its credential loaded.
+    async def project_for(
+        self, user: User, project_id: uuid.UUID
+    ) -> tuple[Project, TeamMembership]:
+        """The project, with its credential loaded, and the caller's membership.
 
         The credential is loaded because both readers need it: the live one to
         connect, and the dump one to know which schema the project is about.
         """
-        return await get_owned_project(
-            self.session, owner, project_id, with_connection=True
+        return await get_project_membership(
+            self.session, user, project_id, with_connection=True
         )
 
     async def upload(
@@ -292,4 +295,4 @@ class SchemaService:
         """
         if project.connection is None:
             return None
-        return project.connection.schema_name
+        return project.schema_name

@@ -64,3 +64,33 @@ class SetRevokedRequest(BaseModel):
 
     revoked: bool
     reason: str | None = Field(default=None, max_length=500)
+
+
+class AdminTeamSummary(BaseModel):
+    """One row of the team list."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    created_at: datetime
+    member_count: int
+    tier: str
+    status: str
+    project_count: int
+    query_count: int
+
+
+class AdminTeamListResponse(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    teams: list[AdminTeamSummary]
+
+
+class AdminTeamDetail(AdminTeamSummary):
+    """One team, with the usage counted over its own billing period."""
+
+    usage: UsageResponse
+    provider_customer_id: str | None
+    provider_subscription_id: str | None

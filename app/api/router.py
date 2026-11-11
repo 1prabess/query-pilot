@@ -11,12 +11,15 @@ from app.api.routes import (
     query,
     schema,
     subscription,
+    team,
 )
 
 api_router = APIRouter()
 
 api_router.include_router(health.router)
 api_router.include_router(auth.router)
+api_router.include_router(team.router)
+api_router.include_router(team.invitations_router)
 api_router.include_router(project.router)
 api_router.include_router(schema.router)
 api_router.include_router(er.router)

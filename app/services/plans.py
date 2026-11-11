@@ -11,6 +11,7 @@ makes in a database. What lives in the database is which plan a user is on.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 FREE = "free"
@@ -35,11 +36,19 @@ class Plan:
     is how long a query may run against the customer's database; the
     deployment's own setting is a ceiling on it, so an operator can hold
     every tier down without editing this table.
+
+    `rank` orders the tiers against each other. It is what says which of two
+    plans is the more generous one.
     """
 
     tier: str
     label: str
+    rank: int
     max_projects: int
+    # How many teams one account may own. Every account has a team of its
+    # own from the day it registers, so the free plan's one team is the
+    # personal team and creating another one needs a paid plan.
+    max_teams: int
     # `None` means no limit. A limit of zero would be a plan that allows
     # nothing, which is not a thing anyone pays for.
     monthly_queries: int | None
@@ -51,7 +60,9 @@ class Plan:
 FREE_PLAN = Plan(
     tier=FREE,
     label="Free",
+    rank=0,
     max_projects=1,
+    max_teams=1,
     monthly_queries=50,
     max_rows=100,
     execution_timeout_ms=5_000,
@@ -61,7 +72,9 @@ FREE_PLAN = Plan(
 BASIC_PLAN = Plan(
     tier=BASIC,
     label="Basic",
+    rank=1,
     max_projects=5,
+    max_teams=5,
     monthly_queries=1_000,
     max_rows=1_000,
     execution_timeout_ms=15_000,
@@ -71,7 +84,9 @@ BASIC_PLAN = Plan(
 PREMIUM_PLAN = Plan(
     tier=PREMIUM,
     label="Premium",
+    rank=2,
     max_projects=25,
+    max_teams=25,
     monthly_queries=None,
     max_rows=5_000,
     execution_timeout_ms=60_000,
@@ -97,3 +112,18 @@ def get_plan(tier: str | None) -> Plan:
 
 def is_known_tier(tier: str) -> bool:
     return tier.strip().lower() in PLANS
+
+
+def best_plan(tiers: Iterable[str]) -> Plan:
+    """The most generous plan among the tiers named.
+
+    An account owns several teams and each team has its own plan, but the
+    account is one customer: paying for one of its teams is paying for the
+    account, so the account gets the best of them.
+    """
+    best = FREE_PLAN
+    for tier in tiers:
+        candidate = get_plan(tier)
+        if candidate.rank > best.rank:
+            best = candidate
+    return best

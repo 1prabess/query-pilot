@@ -1,4 +1,4 @@
-"""What a user has used, and whether they may do the thing they are asking for.
+"""What a team has used, and whether they may do the thing they are asking for.
 
 The counting is done from the tables that already exist: a question answered
 is a row in `queries`, a project is a row in `projects`. There is no counter
@@ -50,29 +50,35 @@ class QuotaService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def subscription_for(self, user_id: uuid.UUID) -> Subscription | None:
+    async def subscription_for_team(
+        self, team_id: uuid.UUID
+    ) -> Subscription | None:
         return await self.session.scalar(
-            select(Subscription).where(Subscription.user_id == user_id)
+            select(Subscription).where(Subscription.team_id == team_id)
         )
 
-    async def plan_for(self, user_id: uuid.UUID) -> Plan:
-        """The plan the user is on right now.
+    async def plan_for_team(self, team_id: uuid.UUID | None) -> Plan:
+        """The plan the team is on right now.
 
         A subscription that is not active -- cancelled, or a payment that did
         not go through -- gives the free plan. Losing the paid plan is a
         worse outcome than losing the account, and a customer whose card
         bounced is not a customer to lock out.
         """
-        return _plan_for(await self.subscription_for(user_id))
+        if team_id is None:
+            return FREE_PLAN
+        return _plan_for(await self.subscription_for_team(team_id))
 
-    async def allowance(self, user_id: uuid.UUID) -> Allowance:
+    async def allowance_for_team(self, team_id: uuid.UUID | None) -> Allowance:
         """The plan, the period, and everything used against them."""
-        subscription = await self.subscription_for(user_id)
+        subscription = (
+            await self.subscription_for_team(team_id) if team_id else None
+        )
         period_start, period_end = _period(subscription)
         return Allowance(
             plan=_plan_for(subscription),
-            projects_used=await self._projects_used(user_id),
-            queries_used=await self._queries_used(user_id, period_start, period_end),
+            projects_used=await self._projects_used(team_id),
+            queries_used=await self._queries_used(team_id, period_start, period_end),
             period_start=period_start,
             period_end=period_end,
             subscription=subscription,
@@ -119,23 +125,30 @@ class QuotaService:
                 "per query. Upgrade the plan, or ask for fewer rows."
             )
 
-    async def _projects_used(self, user_id: uuid.UUID) -> int:
+    async def _projects_used(self, team_id: uuid.UUID | None) -> int:
+        if team_id is None:
+            return 0
         count = await self.session.scalar(
             select(func.count())
             .select_from(Project)
-            .where(Project.owner_id == user_id)
+            .where(Project.team_id == team_id)
         )
         return int(count or 0)
 
     async def _queries_used(
-        self, user_id: uuid.UUID, start: datetime, end: datetime
+        self,
+        team_id: uuid.UUID | None,
+        start: datetime,
+        end: datetime,
     ) -> int:
+        if team_id is None:
+            return 0
         count = await self.session.scalar(
             select(func.count())
             .select_from(Query)
             .join(Project, Project.id == Query.project_id)
             .where(
-                Project.owner_id == user_id,
+                Project.team_id == team_id,
                 Query.created_at >= start,
                 Query.created_at < end,
             )

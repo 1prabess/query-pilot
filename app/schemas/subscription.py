@@ -16,6 +16,7 @@ class PlanResponse(BaseModel):
     tier: str
     label: str
     max_projects: int
+    max_teams: int
     monthly_queries: int | None
     max_rows: int
     execution_timeout_ms: int
@@ -27,6 +28,7 @@ class PlanResponse(BaseModel):
             tier=plan.tier,
             label=plan.label,
             max_projects=plan.max_projects,
+            max_teams=plan.max_teams,
             monthly_queries=plan.monthly_queries,
             max_rows=plan.max_rows,
             execution_timeout_ms=plan.execution_timeout_ms,

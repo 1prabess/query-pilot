@@ -28,7 +28,7 @@ async def get_er_diagram(
     Nothing in the answer is a coordinate. The client lays the diagram out,
     so one model can be drawn on a page and printed on a sheet.
     """
-    project = await schema_svc.owned_project(user, project_id)
+    project, _ = await schema_svc.project_for(user, project_id)
     schema_doc = await schema_svc.get(project, captured_by=user.id)
     await session.commit()
 

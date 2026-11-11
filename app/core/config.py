@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_TTL_MINUTES: int = Field(default=15, ge=1, le=1440)
     REFRESH_TOKEN_TTL_DAYS: int = Field(default=30, ge=1, le=365)
     MAGIC_LINK_TTL_MINUTES: int = Field(default=15, ge=1, le=1440)
+    INVITATION_TTL_HOURS: int = Field(default=72, ge=1, le=720)
     JWT_ALGORITHM: Literal["HS256", "HS384", "HS512"] = "HS256"
     CREDENTIAL_ENCRYPTION_KEY: SecretStr
 

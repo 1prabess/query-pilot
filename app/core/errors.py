@@ -129,3 +129,55 @@ class AccountRevoked(AppError, status_code=403, code="account_revoked"):
 
 class CannotRevokeSelf(AppError, status_code=400, code="cannot_revoke_self"):
     """An administrator cannot revoke their own account."""
+
+
+class TeamNotFound(AppError, status_code=404, code="team_not_found"):
+    """No team with that id, or the caller is not in it."""
+
+
+class TeamLimitReached(AppError, status_code=403, code="team_limit_reached"):
+    """The account already owns as many teams as its plan allows."""
+
+
+class PermissionDenied(AppError, status_code=403, code="permission_denied"):
+    """The caller's role in the team does not allow that."""
+
+
+class InvalidRole(AppError, status_code=422, code="invalid_role"):
+    """The role named is not one a person can hold."""
+
+
+class InvalidName(AppError, status_code=422, code="invalid_name"):
+    """The name given is empty, or holds nothing but spaces."""
+
+
+class AlreadyAMember(AppError, status_code=409, code="already_a_member"):
+    """That person is already in the team."""
+
+
+class InvitationNotFound(AppError, status_code=404, code="invitation_not_found"):
+    """No invitation with that id, or the token does not match one."""
+
+
+class InvitationExpired(AppError, status_code=410, code="invitation_expired"):
+    """The invitation was not accepted in time."""
+
+
+class InvitationAlreadyAccepted(
+    AppError, status_code=409, code="invitation_already_accepted"
+):
+    """The invitation has already been used."""
+
+
+class InvitationEmailMismatch(
+    AppError, status_code=403, code="invitation_email_mismatch"
+):
+    """The invitation was sent to a different email address."""
+
+
+class CannotRemoveOwner(AppError, status_code=400, code="cannot_remove_owner"):
+    """The team owner cannot be removed. Ownership has to be transferred."""
+
+
+class WriteNotPermitted(AppError, status_code=403, code="write_not_permitted"):
+    """This person may read the database but not change it."""

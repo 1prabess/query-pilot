@@ -20,6 +20,7 @@ class QueryResponse(BaseModel):
     """
 
     id: UUID
+    author_id: UUID | None
     question: str
     sql: str
     explanation: str

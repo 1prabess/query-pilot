@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.project import Project
 from app.models.query import Query
 from app.models.subscription import Subscription
+from app.models.team import Team
+from app.models.team_membership import OWNER, TeamMembership
 from app.models.user import User
 from app.services.plans import ACTIVE, FREE
 from app.services.quota import Allowance, QuotaService
@@ -46,6 +48,30 @@ class UserDetail:
     allowance: Allowance
 
 
+@dataclass(frozen=True)
+class TeamSummary:
+    """One team, as the list shows it."""
+
+    id: uuid.UUID
+    name: str
+    created_at: datetime
+    member_count: int
+    tier: str
+    status: str
+    project_count: int
+    query_count: int
+
+
+@dataclass(frozen=True)
+class TeamDetail:
+    """One team, with the usage counted over its own billing period."""
+
+    summary: TeamSummary
+    provider_customer_id: str | None
+    provider_subscription_id: str | None
+    allowance: Allowance
+
+
 class AdminService:
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -75,10 +101,41 @@ class AdminService:
         if row is None:
             return None
 
-        allowance = await self.quota.allowance(user_id)
+        team_id = await self._first_owned_team_id(user_id)
+        allowance = await self.quota.allowance_for_team(team_id)
         subscription = allowance.subscription
         return UserDetail(
             summary=_summary_from(row),
+            provider_customer_id=(
+                subscription.provider_customer_id if subscription else None
+            ),
+            provider_subscription_id=(
+                subscription.provider_subscription_id if subscription else None
+            ),
+            allowance=allowance,
+        )
+
+    async def list_teams(
+        self, *, limit: int, offset: int
+    ) -> tuple[list[TeamSummary], int]:
+        """Every team, the plan it is on, and what it has used."""
+        rows = await self.session.execute(
+            _team_query().limit(limit).offset(offset)
+        )
+        total = await self.session.scalar(select(func.count()).select_from(Team))
+        return [_team_from(row) for row in rows], int(total or 0)
+
+    async def get_team(self, team_id: uuid.UUID) -> TeamDetail | None:
+        """One team, and everything counted against it."""
+        rows = await self.session.execute(_team_query().where(Team.id == team_id))
+        row = rows.first()
+        if row is None:
+            return None
+
+        allowance = await self.quota.allowance_for_team(team_id)
+        subscription = allowance.subscription
+        return TeamDetail(
+            summary=_team_from(row),
             provider_customer_id=(
                 subscription.provider_customer_id if subscription else None
             ),
@@ -125,6 +182,35 @@ class AdminService:
         await self.session.flush()
         return await self.get_user(user_id)
 
+    async def _first_owned_team_id(
+        self, user_id: uuid.UUID
+    ) -> uuid.UUID | None:
+        return await self.session.scalar(
+            select(TeamMembership.team_id)
+            .where(
+                TeamMembership.user_id == user_id,
+                TeamMembership.role == OWNER,
+            )
+            .order_by(TeamMembership.created_at)
+            .limit(1)
+        )
+
+
+def _owned_team_ids() -> Select:
+    """The teams one account owns.
+
+    A fresh statement each time: the same select cannot be correlated into
+    two different places in the same query.
+    """
+    return (
+        select(TeamMembership.team_id)
+        .where(
+            TeamMembership.user_id == User.id,
+            TeamMembership.role == OWNER,
+        )
+        .correlate(User)
+    )
+
 
 # The tail is `Any` because the checker gives up naming column types past
 # nine of them -- `select()` of ten columns already infers `*tuple[Any, ...]`.
@@ -145,14 +231,46 @@ def _summary_query() -> Select[
     datetime | None,
     *tuple[Any, ...],
 ]:
-    """Every account, joined to its subscription and its usage.
+    """Every account, with the plan of the team it owns and what it has used.
 
-    Grouped once, so the row count does not grow with the account count.
-    The projects and the queries are joined to the same account and to each
-    other, which means one query row is one query row -- a user with two
-    projects and five questions produces five joined rows, and the distinct
-    count on the project side still says two.
+    The counts are correlated subqueries rather than joins. An account that
+    owns three teams would join three times over, and the row count would
+    grow with the number of teams the account has.
     """
+    project_count = (
+        select(func.count())
+        .select_from(Project)
+        .where(Project.team_id.in_(_owned_team_ids()))
+        .correlate(User)
+        .scalar_subquery()
+    )
+    query_count = (
+        select(func.count())
+        .select_from(Query)
+        .join(Project, Project.id == Query.project_id)
+        .where(Project.team_id.in_(_owned_team_ids()))
+        .correlate(User)
+        .scalar_subquery()
+    )
+    last_query_at = (
+        select(func.max(Query.created_at))
+        .join(Project, Project.id == Query.project_id)
+        .where(Project.team_id.in_(_owned_team_ids()))
+        .correlate(User)
+        .scalar_subquery()
+    )
+    first_owned_team = (
+        select(TeamMembership.team_id)
+        .where(
+            TeamMembership.user_id == User.id,
+            TeamMembership.role == OWNER,
+        )
+        .order_by(TeamMembership.created_at)
+        .limit(1)
+        .correlate(User)
+        .scalar_subquery()
+    )
+
     return (
         select(
             User.id,
@@ -168,22 +286,46 @@ def _summary_query() -> Select[
             Subscription.status,
             Subscription.period_start,
             Subscription.period_end,
-            func.count(distinct(Project.id)).label("project_count"),
-            func.count(Query.id).label("query_count"),
-            func.max(Query.created_at).label("last_query_at"),
+            project_count.label("project_count"),
+            query_count.label("query_count"),
+            last_query_at.label("last_query_at"),
         )
         .select_from(User)
-        .outerjoin(Subscription, Subscription.user_id == User.id)
-        .outerjoin(Project, Project.owner_id == User.id)
-        .outerjoin(Query, Query.project_id == Project.id)
-        .group_by(
-            User.id,
+        .outerjoin(Team, Team.id == first_owned_team)
+        .outerjoin(Subscription, Subscription.team_id == Team.id)
+        .order_by(User.created_at.desc())
+    )
+
+
+def _team_query() -> Select[
+    uuid.UUID,
+    str,
+    datetime,
+    int,
+    str | None,
+    str | None,
+    int,
+    int,
+]:
+    """Every team, with the plan it is on and what it has used."""
+    return (
+        select(
+            Team.id,
+            Team.name,
+            Team.created_at,
+            func.count(distinct(TeamMembership.user_id)).label("member_count"),
             Subscription.tier,
             Subscription.status,
-            Subscription.period_start,
-            Subscription.period_end,
+            func.count(distinct(Project.id)).label("project_count"),
+            func.count(distinct(Query.id)).label("query_count"),
         )
-        .order_by(User.created_at.desc())
+        .select_from(Team)
+        .outerjoin(Subscription, Subscription.team_id == Team.id)
+        .outerjoin(TeamMembership, TeamMembership.team_id == Team.id)
+        .outerjoin(Project, Project.team_id == Team.id)
+        .outerjoin(Query, Query.project_id == Project.id)
+        .group_by(Team.id, Subscription.tier, Subscription.status)
+        .order_by(Team.created_at.desc())
     )
 
 
@@ -207,7 +349,7 @@ def _summary_from(
 ) -> UserSummary:
     """One grouped row as the summary the rest of the app reads.
 
-    An account with no subscription row yet is on the free plan, which is
+    An account with no team of its own yet is on the free plan, which is
     what it would be given the moment anybody asked.
     """
     return UserSummary(
@@ -227,4 +369,29 @@ def _summary_from(
         project_count=int(row.project_count or 0),
         query_count=int(row.query_count or 0),
         last_query_at=row.last_query_at,
+    )
+
+
+def _team_from(
+    row: Row[
+        uuid.UUID,
+        str,
+        datetime,
+        int,
+        str | None,
+        str | None,
+        int,
+        int,
+    ],
+) -> TeamSummary:
+    """One grouped row as the team summary the admin list shows."""
+    return TeamSummary(
+        id=row.id,
+        name=row.name,
+        created_at=row.created_at,
+        member_count=int(row.member_count or 0),
+        tier=row.tier or FREE,
+        status=row.status or ACTIVE,
+        project_count=int(row.project_count or 0),
+        query_count=int(row.query_count or 0),
     )

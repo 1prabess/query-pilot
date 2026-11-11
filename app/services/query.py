@@ -19,12 +19,14 @@ from app.core.errors import (
     PlanNotAllowed,
     QueryNotFound,
     WriteNotConfirmed,
+    WriteNotPermitted,
     WritesDisabled,
 )
 from app.llm.service import LLMService
 from app.models.project import Project
 from app.models.query import Query
-from app.services import sql_guard
+from app.models.team_membership import TeamMembership
+from app.services import permissions, sql_guard
 from app.services.query_executor import QueryExecutor
 from app.services.quota import QuotaService
 
@@ -43,6 +45,7 @@ class QueryService:
     async def ask(
         self,
         project: Project,
+        membership: TeamMembership,
         question: str,
         *,
         schema_doc: dict,
@@ -54,14 +57,21 @@ class QueryService:
         is worth having afterwards, and the answer is worthless if the record
         of it was lost when the request ended.
         """
-        allowance = await self.quota.allowance(project.owner_id)
+        permissions.require(membership.role, permissions.ASK)
+
+        allowance = await self.quota.allowance_for_team(project.team_id)
         self.quota.assert_can_ask(allowance)
         plan = allowance.plan
 
         # The project says the customer is willing to write to its own
-        # database; the plan says what we sell. Both have to say yes, so
-        # neither can answer for the other.
-        writes_allowed = project.writes_enabled and plan.allows_writes
+        # database; the plan says what we sell; the membership says whether
+        # this person is allowed to. All three have to say yes, so none of
+        # them can answer for the others.
+        writes_allowed = (
+            project.writes_enabled
+            and plan.allows_writes
+            and permissions.may_write(membership)
+        )
 
         completion = await llm.generate(
             question=question,
@@ -78,6 +88,7 @@ class QueryService:
 
         record = Query(
             project_id=project.id,
+            author_id=membership.user_id,
             question=question,
             sql=answer["sql"],
             explanation=answer["explanation"],
@@ -92,6 +103,7 @@ class QueryService:
 
         return {
             "id": record.id,
+            "author_id": record.author_id,
             "question": record.question,
             "sql": answer["sql"],
             "explanation": answer["explanation"],
@@ -109,6 +121,7 @@ class QueryService:
     async def execute(
         self,
         project: Project,
+        membership: TeamMembership,
         query_id: uuid.UUID,
         *,
         limit: int,
@@ -127,9 +140,13 @@ class QueryService:
         be repeated and a write cannot, and the difference between "run the
         query I was shown" and "run whatever you have" is one field.
 
-        A write also needs a plan that includes writes. The customer's own
-        setting says they are willing; the plan says what the product sells.
+        A write also needs a plan that includes writes and a caller who has
+        been given write access. The customer's own setting says they are
+        willing; the plan says what the product sells; the membership says
+        who may.
         """
+        permissions.require(membership.role, permissions.RUN)
+
         record = await self.session.scalar(
             select(Query).where(
                 Query.id == query_id,
@@ -139,8 +156,12 @@ class QueryService:
         if record is None:
             raise QueryNotFound("No such query for this project.")
 
-        plan = await self.quota.plan_for(project.owner_id)
-        writes_allowed = project.writes_enabled and plan.allows_writes
+        plan = await self.quota.plan_for_team(project.team_id)
+        writes_allowed = (
+            project.writes_enabled
+            and plan.allows_writes
+            and permissions.may_write(membership)
+        )
 
         statement = sql_guard.inspect(record.sql)
 
@@ -153,6 +174,10 @@ class QueryService:
             if not project.writes_enabled:
                 raise WritesDisabled(
                     "This project does not allow queries that change data."
+                )
+            if not permissions.may_write(membership):
+                raise WriteNotPermitted(
+                    "You do not have write access in this team."
                 )
             if not confirmed:
                 raise WriteNotConfirmed(

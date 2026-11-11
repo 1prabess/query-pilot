@@ -53,6 +53,11 @@ class QueryResult:
     """What a query returned, in the shape the API hands it over."""
 
     columns: list[str]
+    # The PostgreSQL type of each column, by the name the server calls it:
+    # `int4`, `numeric`, `timestamptz`, `text`. A client that only has the
+    # values cannot tell a number from a date that looks like one, and a
+    # chart that cannot tell them apart is drawn wrong.
+    column_types: list[str]
     rows: list[list[Any]]
     row_count: int
     truncated: bool
@@ -103,7 +108,7 @@ class QueryExecutor:
             ) from exc
 
         try:
-            columns, rows, row_count, truncated = await self._run(
+            columns, column_types, rows, row_count, truncated = await self._run(
                 connection, statement, limit, timeout_ms
             )
         finally:
@@ -111,6 +116,7 @@ class QueryExecutor:
 
         return QueryResult(
             columns=columns,
+            column_types=column_types,
             rows=rows,
             row_count=row_count,
             truncated=truncated,
@@ -125,7 +131,7 @@ class QueryExecutor:
         statement: Statement,
         limit: int,
         timeout_ms: int | None,
-    ) -> tuple[list[str], list[list[Any]], int, bool]:
+    ) -> tuple[list[str], list[str], list[list[Any]], int, bool]:
         """Run the statement, in whichever transaction it needs."""
         try:
             if statement.is_write:
@@ -146,7 +152,8 @@ class QueryExecutor:
         statement: Statement,
         limit: int,
         timeout_ms: int | None,
-    ) -> tuple[list[str], list[list[Any]], int, bool]:
+        schema_name: str,
+    ) -> tuple[list[str], list[str], list[list[Any]], int, bool]:
         """A read, in a transaction that cannot write.
 
         The read-only transaction is the second wall, not the only one. The
@@ -159,7 +166,9 @@ class QueryExecutor:
         async with connection.transaction():
             await connection.execute("SET TRANSACTION READ ONLY")
             prepared = await connection.prepare(sql)
-            columns = [attribute.name for attribute in prepared.get_attributes()]
+            attributes = prepared.get_attributes()
+            columns = [attribute.name for attribute in attributes]
+            column_types = [attribute.type.name for attribute in attributes]
             records = await prepared.fetch(timeout=self._timeout_seconds(timeout_ms))
 
         truncated = len(records) > limit
@@ -168,6 +177,7 @@ class QueryExecutor:
 
         return (
             columns,
+            column_types,
             [[_json_value(value) for value in record.values()] for record in records],
             len(records),
             truncated,
@@ -178,7 +188,8 @@ class QueryExecutor:
         connection: asyncpg.Connection,
         statement: Statement,
         timeout_ms: int | None,
-    ) -> tuple[list[str], list[list[Any]], int, bool]:
+        schema_name: str,
+    ) -> tuple[list[str], list[str], list[list[Any]], int, bool]:
         """A write, in a transaction that commits.
 
         A write is not capped the way a read is. `LIMIT` around an INSERT
@@ -190,14 +201,17 @@ class QueryExecutor:
                 status = await connection.execute(
                     statement.sql, timeout=self._timeout_seconds(timeout_ms)
                 )
-                return ([], [], _rows_affected(status), False)
+                return ([], [], [], _rows_affected(status), False)
 
             prepared = await connection.prepare(statement.sql)
-            columns = [attribute.name for attribute in prepared.get_attributes()]
+            attributes = prepared.get_attributes()
+            columns = [attribute.name for attribute in attributes]
+            column_types = [attribute.type.name for attribute in attributes]
             records = await prepared.fetch(timeout=self._timeout_seconds(timeout_ms))
 
         return (
             columns,
+            column_types,
             [[_json_value(value) for value in record.values()] for record in records],
             len(records),
             False,
@@ -213,8 +227,6 @@ class QueryExecutor:
         if timeout_ms is not None:
             ceiling_ms = min(ceiling_ms, timeout_ms)
         return ceiling_ms / 1000
-
-
 def _with_row_limit(sql: str, limit: int) -> str:
     """The same statement, with a hard cap on the rows it may return.
 

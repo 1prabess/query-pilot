@@ -1,11 +1,17 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Query
+from sqlalchemy import select
 
 from app.api.deps import AdminSvc, AdminUser, DbSession, SubscriptionSvc
-from app.core.errors import CannotRevokeSelf, UserNotFound
+from app.core.errors import CannotRevokeSelf, TeamNotFound, UserNotFound
+from app.models.team import Team
+from app.models.team_membership import OWNER, TeamMembership
 from app.models.user import User
 from app.schemas.admin import (
+    AdminTeamDetail,
+    AdminTeamListResponse,
+    AdminTeamSummary,
     AdminUserDetail,
     AdminUserListResponse,
     AdminUserSummary,
@@ -17,7 +23,7 @@ from app.schemas.subscription import (
     SubscriptionResponse,
     UsageResponse,
 )
-from app.services.admin import UserDetail
+from app.services.admin import TeamDetail, UserDetail
 from app.services.plans import get_plan
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -98,7 +104,11 @@ async def set_user_plan(
     svc: SubscriptionSvc,
     admin: AdminUser,
 ) -> SubscriptionResponse:
-    """Put a user on a plan.
+    """Put an account on a plan.
+
+    A plan belongs to a team, so this is the plan of the team the account
+    owns first -- the one it registered with. Use the team route when the
+    team matters more than the account.
 
     This is how a plan changes today, because there is no payment provider
     to say so yet. It is deliberately the same operation a payment webhook
@@ -110,8 +120,72 @@ async def set_user_plan(
     if target is None:
         raise UserNotFound("No such user.")
 
+    team_id = await _first_owned_team_id(session, target.id)
+    if team_id is None:
+        raise UserNotFound("This account does not own a team.")
+
     subscription = await svc.set_plan(
-        target.id,
+        team_id,
+        tier=body.tier,
+        status=body.status,
+        period_start=body.period_start,
+        period_end=body.period_end,
+    )
+    await session.commit()
+
+    plan = get_plan(subscription.tier)
+    return SubscriptionResponse(
+        tier=subscription.tier,
+        status=subscription.status,
+        period_start=subscription.period_start,
+        period_end=subscription.period_end,
+        plan=PlanResponse.of(plan),
+    )
+
+
+@router.get("/teams", response_model=AdminTeamListResponse)
+async def list_teams(
+    svc: AdminSvc,
+    admin: AdminUser,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> AdminTeamListResponse:
+    """Every team, the plan it is on, and what it has used."""
+    summaries, total = await svc.list_teams(limit=limit, offset=offset)
+    return AdminTeamListResponse(
+        total=total,
+        limit=limit,
+        offset=offset,
+        teams=[AdminTeamSummary.model_validate(summary) for summary in summaries],
+    )
+
+
+@router.get("/teams/{team_id}", response_model=AdminTeamDetail)
+async def get_team(
+    team_id: UUID, svc: AdminSvc, admin: AdminUser
+) -> AdminTeamDetail:
+    """One team, and everything counted against it."""
+    detail = await svc.get_team(team_id)
+    if detail is None:
+        raise TeamNotFound("No such team.")
+    return _team_detail_response(detail)
+
+
+@router.patch("/teams/{team_id}/subscription", response_model=SubscriptionResponse)
+async def set_team_plan(
+    team_id: UUID,
+    body: SetPlanRequest,
+    session: DbSession,
+    svc: SubscriptionSvc,
+    admin: AdminUser,
+) -> SubscriptionResponse:
+    """Put a team on a plan."""
+    team = await session.get(Team, team_id)
+    if team is None:
+        raise TeamNotFound("No such team.")
+
+    subscription = await svc.set_plan(
+        team.id,
         tier=body.tier,
         status=body.status,
         period_start=body.period_start,
@@ -136,4 +210,26 @@ def _detail_response(detail: UserDetail) -> AdminUserDetail:
         usage=UsageResponse.of(detail.allowance),
         provider_customer_id=detail.provider_customer_id,
         provider_subscription_id=detail.provider_subscription_id,
+    )
+
+
+def _team_detail_response(detail: TeamDetail) -> AdminTeamDetail:
+    summary = AdminTeamSummary.model_validate(detail.summary)
+    return AdminTeamDetail(
+        **summary.model_dump(),
+        usage=UsageResponse.of(detail.allowance),
+        provider_customer_id=detail.provider_customer_id,
+        provider_subscription_id=detail.provider_subscription_id,
+    )
+
+
+async def _first_owned_team_id(session: DbSession, user_id: UUID) -> UUID | None:
+    return await session.scalar(
+        select(TeamMembership.team_id)
+        .where(
+            TeamMembership.user_id == user_id,
+            TeamMembership.role == OWNER,
+        )
+        .order_by(TeamMembership.created_at)
+        .limit(1)
     )

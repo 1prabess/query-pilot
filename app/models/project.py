@@ -14,7 +14,7 @@ from app.db.session import Base
 from app.models.project_connection import ProjectConnection
 
 if TYPE_CHECKING:
-    from app.models.user import User
+    from app.models.team import Team
 
 
 def build_dsn(
@@ -47,9 +47,9 @@ class Project(Base):
         default=uuid.uuid4,
         server_default=func.gen_random_uuid(),
     )
-    owner_id: Mapped[uuid.UUID] = mapped_column(
+    team_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
+        ForeignKey("teams.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -75,7 +75,7 @@ class Project(Base):
     connection: Mapped[ProjectConnection | None] = relationship(
         back_populates="project", cascade="all, delete-orphan", uselist=False
     )
-    owner: Mapped[User] = relationship(back_populates="projects")
+    team: Mapped[Team] = relationship(back_populates="projects")
 
     def set_connection(
         self,

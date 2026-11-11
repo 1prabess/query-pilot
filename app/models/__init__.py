@@ -7,5 +7,8 @@ from app.models import (  # noqa: F401
     schema_change,
     schema_version,
     subscription,
+    team,
+    team_invitation,
+    team_membership,
     user,
 )
