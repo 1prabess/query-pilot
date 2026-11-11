@@ -41,8 +41,10 @@ MAX_CHARTS = 6
 # hundred and sixty-five rows.
 CHART_ROW_LIMIT = 1000
 
-# The most slices a pie may have. More than that is a bar.
-MAX_SLICES = 12
+# The most slices a pie may have. More than that is a bar: the slices get
+# too thin to read. A legend beside the pie carries the names, so the cap is
+# generous.
+MAX_SLICES = 20
 
 # The PostgreSQL types that hold a number, and the ones that hold a point in
 # time. Everything else names something.

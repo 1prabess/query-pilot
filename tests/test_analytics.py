@@ -185,7 +185,7 @@ class TestResolveChart:
 
     def test_a_pie_with_too_many_slices_becomes_a_bar(self):
         columns = _columns(["plan", "revenue"], ["text", "numeric"])
-        rows = [[f"plan {index}", index] for index in range(20)]
+        rows = [[f"plan {index}", index] for index in range(21)]
 
         chart = _resolve_chart(
             _chart_plan("pie", x="plan", y=["revenue"]), columns, rows

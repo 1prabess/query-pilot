@@ -27,9 +27,9 @@ Rules:
 Choosing the kind:
 The kind follows the question. A question does not always want a line or a bar, and reaching for one out of habit is how a chart ends up saying less than the question asked.
 - How a figure moved over time: "line". Use "area" when the size of the total matters as much as the shape of the line: a running total, or anything that accumulates, is an "area", because the space under it is the total itself.
-- Comparing figures across categories: "bar".
 - How a total is made up across a second dimension: "stacked_bar", with that second dimension as the series.
-- How the whole splits into parts: "pie" or "donut". One category column, one number, and only a handful of parts -- more than a dozen parts is a bar. A question about what share, what portion or what part of the whole belongs to each piece is answered with a pie or a donut.
+- How the whole splits into parts: "pie" or "donut". One category column, one number, and only a handful of parts -- more than twenty parts is a bar. A question about what share, what portion, what percentage of the whole, or what part each piece contributes to a total is answered with a pie or a donut.
+- Comparing figures across categories: "bar". A bar shows the figures themselves. When the question asks for the share of a whole, the pie or the donut is the right answer, even when it compares the categories too.
 - Whether two numbers travel together: "scatter", with one number on each axis.
 - A single figure on its own: "number".
 - Values that are not a shape: "table". Always safe.
