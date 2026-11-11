@@ -68,6 +68,59 @@ def _strip_fence(value: Any) -> str:
     return fenced.group(1).strip() if fenced else text
 
 
+def salvage_visualizations(text: str) -> list[dict[str, Any]]:
+    """The charts that arrived before the reply was cut off.
+
+    A reply that runs out of room is cut in the middle of an object, and the
+    whole thing will not parse. The charts that came before it are still
+    there, complete, and worth having.
+    """
+    salvaged: list[dict[str, Any]] = []
+
+    for candidate in _balanced_objects(text):
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict) and isinstance(parsed.get("sql"), str):
+            salvaged.append(parsed)
+
+    return salvaged
+
+
+def _balanced_objects(text: str) -> list[str]:
+    """Every balanced `{...}` in the text, innermost first.
+
+    Nested objects are handed over too: a chart inside an array sits in an
+    object that may itself never close, and a scanner that only counted the
+    outermost one would find nothing at all.
+    """
+    objects: list[str] = []
+    stack: list[int] = []
+    in_string = False
+    escaped = False
+
+    for index, character in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+            continue
+
+        if character == '"':
+            in_string = True
+        elif character == "{":
+            stack.append(index)
+        elif character == "}" and stack:
+            start = stack.pop()
+            objects.append(text[start : index + 1])
+
+    return objects
+
+
 def recover_sql(text: str) -> str | None:
     """Pull the SQL out of a reply whose JSON was cut off mid-object.
 

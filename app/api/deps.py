@@ -10,6 +10,7 @@ from app.db.session import get_db
 from app.llm.service import LLMService, get_llm_service
 from app.models.user import User
 from app.services.admin import AdminService
+from app.services.analytics import AnalyticsService
 from app.services.auth import AuthError, AuthService
 from app.services.er_service import ErService
 from app.services.project import ProjectService
@@ -44,6 +45,13 @@ def get_admin_service(session: DbSession) -> AdminService:
 
 
 AdminSvc = Annotated[AdminService, Depends(get_admin_service)]
+
+
+def get_analytics_service(session: DbSession) -> AnalyticsService:
+    return AnalyticsService(session)
+
+
+AnalyticsSvc = Annotated[AnalyticsService, Depends(get_analytics_service)]
 
 
 def get_schema_service(session: DbSession) -> SchemaService:

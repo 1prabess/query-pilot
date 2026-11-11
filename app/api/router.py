@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from app.api.routes import (
     admin,
+    analytics,
     auth,
     er,
     health,
@@ -24,6 +25,7 @@ api_router.include_router(project.router)
 api_router.include_router(schema.router)
 api_router.include_router(er.router)
 api_router.include_router(query.router)
+api_router.include_router(analytics.router)
 api_router.include_router(subscription.router)
 api_router.include_router(subscription.plans_router)
 api_router.include_router(admin.router)

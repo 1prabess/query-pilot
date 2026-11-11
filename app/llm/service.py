@@ -3,6 +3,10 @@ from typing import Any
 
 from app.core.config import get_settings
 from app.core.errors import LLMError, LLMUnavailable
+from app.llm.analytics_prompts import (
+    build_analytics_system_prompt,
+    build_analytics_user_prompt,
+)
 from app.llm.base import TRUNCATED_REASONS, Completion, Provider, explain
 from app.llm.context import budget_context
 from app.llm.er_prompts import build_er_prompt
@@ -180,6 +184,42 @@ class LLMService:
                 build_system_prompt(writes_enabled=writes_enabled),
                 prompt,
                 max_output_tokens=budget,
+            )
+        except LLMError:
+            raise
+        except Exception as exc:
+            raise LLMError(explain(exc)) from exc
+
+        return completion
+
+    async def generate_analytics(
+        self, *, question: str, schema_doc: dict, max_charts: int
+    ) -> Completion:
+        """Ask the model for a summary and some charts.
+
+        The reply is not checked here. A reply that is cut off, or that does
+        not parse, may still hold charts worth having, so the caller gets the
+        raw text and the reason it was cut off.
+        """
+        if self._provider is None:
+            raise LLMUnavailable(self._unavailable_message())
+
+        schema_budget, output_budget = self._budgets()
+        schema_text, truncated = budget_context(
+            schema_doc, max_tokens=schema_budget
+        )
+        prompt = build_analytics_user_prompt(
+            question,
+            schema_text,
+            truncated=truncated,
+            max_charts=max_charts,
+        )
+
+        try:
+            completion = await self._provider.complete(
+                build_analytics_system_prompt(max_charts=max_charts),
+                prompt,
+                max_output_tokens=output_budget,
             )
         except LLMError:
             raise
